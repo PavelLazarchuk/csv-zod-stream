@@ -59,6 +59,7 @@
         "format:check": "prettier --check .",
         "test": "vitest run",
         "test:watch": "vitest",
+        "test:zod3": "node scripts/test-zod3.mjs",
         "test:coverage": "vitest run --coverage",
         "check": "publint && attw --pack . && node scripts/check-web-standalone.mjs",
         "check-exports": "npm run check",
@@ -73,7 +74,7 @@
         "csv-parse": "^7.0.2"
     },
     "peerDependencies": {
-        "zod": "^4.0.0"
+        "zod": "^3.20.0 || ^4.0.0"
     },
     "keywords": [
         "zod",

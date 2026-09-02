@@ -136,7 +136,10 @@ describe('RowValidationError', () => {
 
     it('mentions the extra issues it is not showing', () => {
         const result = z.object({ a: z.string(), b: z.string() }).safeParse({});
-        const error = new RowValidationError(2, 1, 'raw', result.error!);
+
+        if (result.success) throw new Error('the schema was supposed to reject an empty record');
+
+        const error = new RowValidationError(2, 1, 'raw', result.error);
 
         expect(error.message).toMatch(/\+1 more issue\b/);
     });

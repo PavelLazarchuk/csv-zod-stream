@@ -33,7 +33,7 @@ await pipeline(
 - **CSV, TSV, semicolon and pipe files**, with an optional delimiter sniffer.
 - **Blank cells that behave**, so `.optional()` and `.nullable()` work without a `preprocess` in every schema.
 - **`csv-parse` under the hood** — quoting, escaping, BOM and CRLF are its problem, not a hand-rolled parser's.
-- **Zod v4**, typed end to end: the row type is inferred from the schema, after coercion.
+- **Zod v4 or v3**, typed end to end: the row type is inferred from the schema, after coercion.
 
 ## Install
 
@@ -41,23 +41,8 @@ await pipeline(
 npm install csv-zod-stream zod
 ```
 
-Node ≥ 20. `zod` is a peer dependency; `csv-parse` comes along as a dependency.
-
-## Why not `zod-csv`?
-
-[`zod-csv`](https://www.npmjs.com/package/zod-csv) is the closest package on npm, and its `processCSVInChunks` covers the same ground. The differences are architectural:
-
-|                          | `zod-csv`                                     | `csv-zod-stream`                         |
-| ------------------------ | --------------------------------------------- | ---------------------------------------- |
-| Parser                   | `csv-string`, driven by hand-written chunking | `csv-parse`                              |
-| API                      | custom event emitter (`.on` / `.write`)       | `stream.Transform`                       |
-| `.pipe()` / `pipeline()` | no                                            | yes                                      |
-| Backpressure             | not part of the design                        | end to end, [with a test](#backpressure) |
-| TSV / semicolon          | not offered                                   | built in, plus `delimiter: 'auto'`       |
-| Web Streams              | no                                            | `csv-zod-stream/web`                     |
-| Zod                      | `^3.11`                                       | v4                                       |
-
-If you want a browser `File` helper, `zod-csv` has one and this package does not.
+Node ≥ 20. `zod` is a peer dependency — `^3.20.0 || ^4.0.0`, so a project already on zod 3
+keeps it and a fresh install gets v4. `csv-parse` comes along as a dependency.
 
 ## Backpressure
 

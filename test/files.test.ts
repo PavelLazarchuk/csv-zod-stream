@@ -17,7 +17,7 @@ const fixture = (name: string) => join(import.meta.dirname, 'fixtures', name);
 const Employee = z.object({
     id: z.coerce.number().int().positive(),
     name: z.string().min(1),
-    email: z.email(),
+    email: z.string().email(), // spelled the zod 3 way, so the suite runs on both majors
     department: z.enum(['Engineering', 'Design', 'Support']),
     salary: z.coerce.number().int(),
     notes: z.string(),
