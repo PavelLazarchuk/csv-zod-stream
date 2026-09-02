@@ -41,6 +41,7 @@ jobs:
               run: npm run check
 
             - name: Bundle size budget
+              if: matrix.node != '20'
               run: npm run size
 
             - name: Tarball contents review
