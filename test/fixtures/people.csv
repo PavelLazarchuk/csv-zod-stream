@@ -1,0 +1,7 @@
+﻿id,name,email,department,salary,notes
+1,"Ash, Linden",ash@example.com,Engineering,98000,"Joined 2019.
+Prefers async reviews."
+2,Nour Haddad,nour@example.com,Design,87500,
+3,"O""Brien, Sam",sam@example.com,Engineering,102300,"Said ""ship it"" once."
+4,Wen Li,wen@example.com,Support,64000,Night shift
+5,Priya Raman,priya@example.com,Design,91000,"Tab	inside a quoted field"

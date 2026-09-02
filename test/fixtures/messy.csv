@@ -1,0 +1,7 @@
+id,name,email,department,salary,notes
+1,Ash Linden,ash@example.com,Engineering,98000,fine
+2,Nour Haddad,not-an-email,Design,87500,bad email
+3,Wen Li,wen@example.com,Support,not-a-number,bad salary
+4,"Priya Raman",priya@example.com,Design,91000,"still
+fine"
+5,,missing@example.com,Support,50000,blank name

@@ -1,0 +1,131 @@
+{
+    "name": "csv-zod-stream",
+    "version": "1.0.0",
+    "description": "Streaming CSV/TSV parser with per-row Zod validation \u2014 a real Node.js Transform over csv-parse, with honest backpressure, physical line numbers on errors, and a Web Streams build.",
+    "license": "MIT",
+    "sideEffects": false,
+    "type": "module",
+    "engines": {
+        "node": ">=20"
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "publishConfig": {
+        "access": "public",
+        "provenance": true
+    },
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.js"
+            },
+            "require": {
+                "types": "./dist/index.d.cts",
+                "default": "./dist/index.cjs"
+            }
+        },
+        "./web": {
+            "import": {
+                "types": "./dist/web/index.d.ts",
+                "default": "./dist/web/index.js"
+            },
+            "require": {
+                "types": "./dist/web/index.d.cts",
+                "default": "./dist/web/index.cjs"
+            }
+        },
+        "./package.json": "./package.json"
+    },
+    "typesVersions": {
+        "*": {
+            "web": [
+                "./dist/web/index.d.ts"
+            ]
+        }
+    },
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "scripts": {
+        "build": "tsup",
+        "dev": "tsup --watch",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint .",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
+        "check": "publint && attw --pack . && node scripts/check-web-standalone.mjs",
+        "check-exports": "npm run check",
+        "size": "size-limit",
+        "bench": "npm run build && node --expose-gc scripts/bench-memory.mjs",
+        "pack:verify": "npm pack --dry-run",
+        "changeset": "changeset",
+        "release": "npm run build && node scripts/publish-if-new.mjs",
+        "prepare": "husky"
+    },
+    "dependencies": {
+        "csv-parse": "^7.0.2"
+    },
+    "peerDependencies": {
+        "zod": "^4.0.0"
+    },
+    "keywords": [
+        "zod",
+        "csv",
+        "tsv",
+        "stream",
+        "streaming",
+        "validation",
+        "backpressure",
+        "transform",
+        "csv-parse",
+        "web-streams",
+        "transformstream",
+        "node",
+        "typescript",
+        "parser",
+        "schema",
+        "large-files",
+        "etl"
+    ],
+    "author": "Pavel Lazarchuk",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/PavelLazarchuk/csv-zod-stream.git"
+    },
+    "bugs": {
+        "url": "https://github.com/PavelLazarchuk/csv-zod-stream/issues"
+    },
+    "homepage": "https://github.com/PavelLazarchuk/csv-zod-stream#readme",
+    "devDependencies": {
+        "@arethetypeswrong/cli": "^0.18.5",
+        "@changesets/cli": "^2.31.1",
+        "@eslint/js": "^10.0.1",
+        "@size-limit/preset-small-lib": "^13.0.3",
+        "@types/node": "^26.4.0",
+        "@vitest/coverage-v8": "^4.1.11",
+        "eslint": "^10.9.1",
+        "eslint-config-prettier": "^10.1.8",
+        "husky": "^9.1.7",
+        "lint-staged": "^17.4.1",
+        "prettier": "^3.9.6",
+        "publint": "^0.3.24",
+        "size-limit": "^13.0.3",
+        "tsup": "^8.5.1",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.68.0",
+        "vitest": "^4.1.11",
+        "zod": "^4.5.4"
+    },
+    "overrides": {
+        "tsup": {
+            "esbuild": "^0.28.2"
+        }
+    }
+}
