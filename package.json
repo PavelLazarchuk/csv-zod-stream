@@ -1,7 +1,7 @@
 {
     "name": "csv-zod-stream",
-    "version": "1.0.0",
-    "description": "Streaming CSV/TSV parser with per-row Zod validation \u2014 a real Node.js Transform over csv-parse, with honest backpressure, physical line numbers on errors, and a Web Streams build.",
+    "version": "1.0.1",
+    "description": "Streaming CSV/TSV parser with per-row Zod validation — a real Node.js Transform over csv-parse, with honest backpressure, physical line numbers on errors, and a Web Streams build.",
     "license": "MIT",
     "sideEffects": false,
     "type": "module",
