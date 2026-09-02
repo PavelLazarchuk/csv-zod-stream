@@ -5,26 +5,34 @@ import { parse } from 'csv-parse';
 import type { Parser } from 'csv-parse';
 import type { ZodType, output } from 'zod';
 
-import { SNIFF_LIMIT, byteOf, concat, createLineScanner, detectDelimiter } from './detect';
+import {
+    SNIFF_LIMIT,
+    SNIFF_LINES,
+    byteOf,
+    concat,
+    createLineScanner,
+    detectDelimiter,
+    sampleOf,
+} from './detect';
 import type { LineScanner } from './detect';
-import type { RowValidationError } from './errors';
+import type { CsvRowError } from './errors';
 import { parserOptions } from './parser';
-import { createRowSink } from './rows';
-import type { ParsedEntry, RowSink } from './rows';
+import { createRowSink, createSkipQueue } from './rows';
+import type { ParsedEntry, RowOutcome, RowSink, SkipQueue, SkippedEntry } from './rows';
 import { resolveOptions } from './types';
 import type { CsvValidatorOptions, ResolvedOptions } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface ZodCsvTransform<S extends ZodType> {
-    on(event: 'invalid-row', listener: (error: RowValidationError) => void): this;
+    on(event: 'invalid-row', listener: (error: CsvRowError) => void): this;
     on(event: 'data', listener: (row: output<S>) => void): this;
     on(event: string | symbol, listener: (...args: any[]) => void): this;
 
-    once(event: 'invalid-row', listener: (error: RowValidationError) => void): this;
+    once(event: 'invalid-row', listener: (error: CsvRowError) => void): this;
     once(event: 'data', listener: (row: output<S>) => void): this;
     once(event: string | symbol, listener: (...args: any[]) => void): this;
 
-    emit(event: 'invalid-row', error: RowValidationError): boolean;
+    emit(event: 'invalid-row', error: CsvRowError): boolean;
     emit(event: string | symbol, ...args: any[]): boolean;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -41,6 +49,7 @@ export interface ZodCsvTransform<S extends ZodType> {
 export class ZodCsvTransform<S extends ZodType> extends Transform {
     readonly #options: ResolvedOptions;
     readonly #sink: RowSink<output<S>>;
+    readonly #skips: SkipQueue;
 
     #parser: Parser | undefined;
     #sniff: Uint8Array[] | undefined;
@@ -59,23 +68,28 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
 
         this.#options = resolveOptions(options);
         this.#sink = createRowSink(schema, this.#options);
+        this.#skips = createSkipQueue();
 
         if (this.#options.delimiter !== 'auto') this.#open(this.#options.delimiter);
         else {
+            const quote = byteOf(this.#options.quote, 0x22);
+
             this.#sniff = [];
-            this.#scanner = createLineScanner(
-                byteOf(this.#options.quote, 0x22),
-                byteOf(this.#options.comment)
-            );
+            this.#scanner = createLineScanner({
+                quote,
+                escape: byteOf(this.#options.escape, quote),
+                comment: byteOf(this.#options.comment),
+                lines: SNIFF_LINES,
+            });
         }
     }
 
-    get errors(): readonly RowValidationError[] {
+    get errors(): readonly CsvRowError[] {
         return this.#sink.errors;
     }
 
     #open(delimiter: string): Parser {
-        const parser = parse(parserOptions(this.#options, delimiter));
+        const parser = parse(parserOptions(this.#options, delimiter, this.#skips.add));
 
         parser.on('readable', this.#pump);
         parser.on('drain', () => {
@@ -84,7 +98,7 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
         });
         parser.on('end', () => {
             this.#parserEnded = true;
-            this.#finish();
+            this.#pump();
         });
         parser.on('error', error => this.#abort(error));
 
@@ -93,14 +107,17 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
         return parser;
     }
 
-    #openSniffed(buffered: Uint8Array, end: number): Parser {
-        const start = (this.#scanner as LineScanner).start;
-        const sample = buffered.subarray(start, end === -1 ? buffered.length : end);
+    #openSniffed(buffered: Uint8Array, atEof: boolean): Parser {
+        const scanner = this.#scanner as LineScanner;
+
+        if (atEof || !scanner.ranges.length) scanner.finish(buffered.length);
+
+        const sample = sampleOf(buffered, scanner.ranges);
 
         this.#sniff = undefined;
         this.#scanner = undefined;
 
-        return this.#open(detectDelimiter(sample, this.#options.quote));
+        return this.#open(detectDelimiter(sample, this.#options.quote, this.#options.escape));
     }
 
     override _transform(chunk: Uint8Array, _encoding: BufferEncoding, callback: TransformCallback) {
@@ -109,15 +126,15 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
 
         if (!parser) {
             const sniff = this.#sniff as Uint8Array[];
-            const end = (this.#scanner as LineScanner).push(chunk);
+            const enough = (this.#scanner as LineScanner).push(chunk);
 
             sniff.push(chunk);
             this.#sniffed += chunk.length;
 
-            if (end === -1 && this.#sniffed < SNIFF_LIMIT) return callback();
+            if (!enough && this.#sniffed < SNIFF_LIMIT) return callback();
 
             payload = concat(sniff);
-            parser = this.#openSniffed(payload, end);
+            parser = this.#openSniffed(payload, false);
         }
 
         this.#writeCb = callback;
@@ -133,7 +150,7 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
         if (!parser) {
             const buffered = concat(this.#sniff ?? []);
 
-            parser = this.#openSniffed(buffered, -1);
+            parser = this.#openSniffed(buffered, true);
             if (buffered.length) parser.write(buffered);
         }
 
@@ -150,6 +167,7 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
     override _destroy(error: Error | null, callback: (error: Error | null) => void) {
         this.#writeCb = undefined;
         this.#flushCb = undefined;
+        this.#sniff = undefined;
         this.#parser?.destroy();
 
         callback(error);
@@ -163,16 +181,34 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
             const entry = parser.read() as ParsedEntry | null;
             if (entry === null) break;
 
-            const outcome = this.#sink.handle(entry);
-
-            if (outcome.kind === 'fail') return this.#abort(outcome.error);
-            if (outcome.kind === 'invalid') this.emit('invalid-row', outcome.error);
-            else this.push(outcome.row);
+            if (!this.#deliverSkips(this.#skips.take(entry.info.records))) return;
+            if (!this.#deliver(this.#sink.handle(entry))) return;
         }
 
+        if (this.#parserEnded && !this.#deliverSkips(this.#skips.drain())) return;
         if (this.#parserReady && this.#hasRoom()) this.#release();
+
         this.#finish();
     };
+
+    #deliver(outcome: RowOutcome<output<S>>): boolean {
+        if (outcome.kind === 'fail') {
+            this.#abort(outcome.error);
+
+            return false;
+        }
+
+        if (outcome.kind === 'invalid') this.emit('invalid-row', outcome.error);
+        else this.push(outcome.row);
+
+        return true;
+    }
+
+    #deliverSkips(entries: readonly SkippedEntry[]): boolean {
+        for (const entry of entries) if (!this.#deliver(this.#sink.skip(entry))) return false;
+
+        return true;
+    }
 
     #hasRoom() {
         return this.readableLength < this.readableHighWaterMark;

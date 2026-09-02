@@ -1,17 +1,30 @@
 const LF = 0x0a;
 const CR = 0x0d;
 const QUOTE = 0x22;
-const COMMA = 0x2c;
-const TAB = 0x09;
-const SEMICOLON = 0x3b;
 const BOM = [0xef, 0xbb, 0xbf];
 
+const CANDIDATES = [0x2c, 0x3b, 0x09, 0x7c];
+const DELIMITERS = [',', ';', '\t', '|'];
+
 export const SNIFF_LIMIT = 65_536;
+export const SNIFF_LINES = 5;
+
+export interface LineRange {
+    start: number;
+    end: number;
+}
 
 export interface LineScanner {
-    push(chunk: Uint8Array): number;
+    push(chunk: Uint8Array): boolean;
+    finish(end: number): void;
+    readonly ranges: readonly LineRange[];
+}
 
-    readonly start: number;
+export interface ScannerOptions {
+    quote?: number;
+    escape?: number;
+    comment?: number;
+    lines?: number;
 }
 
 export function byteOf(char: string | undefined, fallback = -1): number {
@@ -24,41 +37,65 @@ export function byteOf(char: string | undefined, fallback = -1): number {
 }
 
 /**
- * Looks for the end of the first line across a series of chunks, carrying the
+ * Finds the record lines of a sample across a series of chunks, carrying the
  * quote state between them so nothing has to be re-scanned or re-joined.
+ * Comment and blank lines are stepped over, the way the parser will.
  *
  * Scanning raw bytes is safe: every byte of a multi-byte UTF-8 sequence has its
  * high bit set, so it can never be mistaken for `"` or `\n`.
  */
-export function createLineScanner(quote = QUOTE, comment = -1): LineScanner {
+export function createLineScanner(options: ScannerOptions = {}): LineScanner {
+    const { quote = QUOTE, escape = quote, comment = -1, lines = 1 } = options;
+    const ranges: LineRange[] = [];
+
     let quoted = false;
+    let escaped = false;
     let scanned = 0;
-    let found = -1;
     let start = 0;
     let head = -1;
     let afterCr = false;
+    let done = false;
 
     return {
-        get start() {
-            return start;
+        ranges,
+
+        finish(end) {
+            if (done || head === -1 || head === comment || end <= start) return;
+
+            ranges.push({ start, end });
         },
 
         push(chunk) {
-            if (found !== -1) return found;
+            if (done) return true;
 
             for (let i = 0; i < chunk.length; i++) {
                 const byte = chunk[i] as number;
                 const offset = scanned + i;
 
-                if (offset < BOM.length && byte === BOM[offset]) continue;
+                if (offset < BOM.length && byte === BOM[offset]) {
+                    start = offset + 1;
+                    continue;
+                }
 
                 if (afterCr) {
                     afterCr = false;
 
+                    // The line already ended at the CR; an LF right behind it
+                    // is the other half of a CRLF, not a second break.
                     if (byte === LF) {
                         start = offset + 1;
                         continue;
                     }
+                }
+
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+
+                if (quoted && byte === escape && escape !== quote) {
+                    escaped = true;
+                    continue;
                 }
 
                 if (byte === quote) {
@@ -67,7 +104,11 @@ export function createLineScanner(quote = QUOTE, comment = -1): LineScanner {
                 } else if ((byte === LF || byte === CR) && !quoted) {
                     afterCr = byte === CR;
 
-                    if (head !== -1 && head !== comment) return (found = offset);
+                    if (head !== -1 && head !== comment) {
+                        ranges.push({ start, end: offset });
+
+                        if (ranges.length >= lines) return (done = true);
+                    }
 
                     start = offset + 1;
                     head = -1;
@@ -76,41 +117,109 @@ export function createLineScanner(quote = QUOTE, comment = -1): LineScanner {
 
             scanned += chunk.length;
 
-            return -1;
+            return false;
         },
     };
 }
 
-/** One-shot {@link createLineScanner} over a buffer that is already whole. */
-export function firstLineEnd(bytes: Uint8Array): number {
-    return createLineScanner().push(bytes);
+/** Copies the scanned lines into one buffer, separated by a line feed. */
+export function sampleOf(bytes: Uint8Array, ranges: readonly LineRange[]): Uint8Array {
+    let size = 0;
+    for (const range of ranges) size += range.end - range.start + 1;
+
+    const sample = new Uint8Array(Math.max(size - 1, 0));
+    let offset = 0;
+
+    for (const range of ranges) {
+        if (offset > 0) sample[offset++] = LF;
+
+        sample.set(bytes.subarray(range.start, range.end), offset);
+        offset += range.end - range.start;
+    }
+
+    return sample;
+}
+
+function countPerLine(sample: Uint8Array, quote: number, escape: number): number[][] {
+    const lines: number[][] = [];
+    let counts = CANDIDATES.map(() => 0);
+    let filled = false;
+    let quoted = false;
+    let escaped = false;
+
+    for (const byte of sample) {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+
+        if (quoted && byte === escape && escape !== quote) {
+            escaped = true;
+            continue;
+        }
+
+        if (byte === quote) {
+            quoted = !quoted;
+            filled = true;
+        } else if (!quoted && (byte === LF || byte === CR)) {
+            if (filled) lines.push(counts);
+
+            counts = CANDIDATES.map(() => 0);
+            filled = false;
+        } else {
+            const index = CANDIDATES.indexOf(byte);
+
+            if (index !== -1 && !quoted) (counts[index] as number)++;
+            filled = true;
+        }
+    }
+
+    if (filled) lines.push(counts);
+
+    return lines;
 }
 
 /**
- * Picks the delimiter that occurs most often outside quotes on the sample line.
- * A heuristic — ties and delimiter-free single-column files fall back to `,`.
+ * Picks the delimiter that occurs the same number of times on every sampled
+ * line, which is what a real delimiter does and what a stray separator inside a
+ * field does not. Falls back to sheer frequency, then to `,`.
  */
-export function detectDelimiter(line: Uint8Array, quote?: string): string {
+export function detectDelimiter(sample: Uint8Array, quote?: string, escape?: string): string {
     const quoteByte = byteOf(quote, QUOTE);
-    let comma = 0;
-    let tab = 0;
-    let semicolon = 0;
-    let quoted = false;
+    const lines = countPerLine(sample, quoteByte, byteOf(escape, quoteByte));
 
-    for (let i = 0; i < line.length; i++) {
-        const byte = line[i];
+    if (lines.length === 0) return ',';
 
-        if (byte === quoteByte) quoted = !quoted;
-        else if (quoted) continue;
-        else if (byte === COMMA) comma++;
-        else if (byte === TAB) tab++;
-        else if (byte === SEMICOLON) semicolon++;
-    }
+    const pick = (score: (index: number) => number, eligible: (index: number) => boolean) => {
+        let chosen = -1;
+        let best = 0;
 
-    if (tab > comma && tab >= semicolon) return '\t';
-    if (semicolon > comma && semicolon > tab) return ';';
+        for (let index = 0; index < CANDIDATES.length; index++) {
+            const value = eligible(index) ? score(index) : 0;
 
-    return ',';
+            if (value > best) {
+                best = value;
+                chosen = index;
+            }
+        }
+
+        return chosen;
+    };
+
+    const first = lines[0] as number[];
+    const consistent = pick(
+        index => first[index] as number,
+        index => lines.every(line => line[index] === first[index])
+    );
+
+    if (consistent !== -1) return DELIMITERS[consistent] as string;
+
+    const frequent = pick(
+        index => lines.reduce((sum, line) => sum + (line[index] as number), 0),
+        () => true
+    );
+
+    return frequent === -1 ? ',' : (DELIMITERS[frequent] as string);
 }
 
 export function concat(chunks: readonly Uint8Array[]): Uint8Array {

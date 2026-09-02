@@ -2,21 +2,39 @@
     {
         "name": "csv-zod-stream",
         "path": "dist/index.js",
-        "limit": "2.5 kB",
+        "limit": "4.1 kB",
         "gzip": true,
-        "ignore": ["csv-parse", "zod", "node:stream", "stream"]
+        "ignore": [
+            "csv-parse",
+            "zod",
+            "node:stream",
+            "stream",
+            "node:stream/promises",
+            "stream/promises",
+            "node:fs",
+            "fs"
+        ]
     },
     {
         "name": "csv-zod-stream (cjs)",
         "path": "dist/index.cjs",
-        "limit": "2.7 kB",
+        "limit": "4.3 kB",
         "gzip": true,
-        "ignore": ["csv-parse", "zod", "node:stream", "stream"]
+        "ignore": [
+            "csv-parse",
+            "zod",
+            "node:stream",
+            "stream",
+            "node:stream/promises",
+            "stream/promises",
+            "node:fs",
+            "fs"
+        ]
     },
     {
         "name": "csv-zod-stream/web",
         "path": "dist/web/index.js",
-        "limit": "2.5 kB",
+        "limit": "3.8 kB",
         "gzip": true,
         "ignore": ["csv-parse", "csv-parse/stream", "zod"]
     }

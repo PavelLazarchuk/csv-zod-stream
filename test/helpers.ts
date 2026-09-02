@@ -2,8 +2,15 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ZodType, output } from 'zod';
 
-import { createCsvValidator } from '../src/index';
+import { RowValidationError, createCsvValidator } from '../src/index';
+import type { CsvRowError } from '../src/index';
 import type { CsvValidatorOptions } from '../src/types';
+
+export function validationErrors(errors: readonly CsvRowError[]): RowValidationError[] {
+    return errors.filter(
+        (error): error is RowValidationError => error instanceof RowValidationError
+    );
+}
 
 export function sliced(text: string, size: number): Readable {
     const bytes = Buffer.from(text, 'utf8');

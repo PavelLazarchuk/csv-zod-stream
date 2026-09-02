@@ -1,20 +1,42 @@
 import { parse } from 'csv-parse/stream';
 import type { ZodType, output } from 'zod';
 
-import { SNIFF_LIMIT, byteOf, concat, createLineScanner, detectDelimiter } from '../detect';
-import type { RowValidationError } from '../errors';
+import {
+    SNIFF_LIMIT,
+    SNIFF_LINES,
+    byteOf,
+    concat,
+    createLineScanner,
+    detectDelimiter,
+    sampleOf,
+} from '../detect';
+import type { CsvRowError } from '../errors';
 import { parserOptions } from '../parser';
-import { createRowSink } from '../rows';
-import type { ParsedEntry } from '../rows';
+import { createRowSink, createSkipQueue } from '../rows';
+import type { ParsedEntry, RowOutcome, SkipQueue } from '../rows';
 import { resolveOptions } from '../types';
 import type { CsvValidatorOptions, ResolvedOptions } from '../types';
 
-export type { CsvValidatorOptions, InvalidRowStrategy } from '../types';
-export { RowValidationError, TooManyInvalidRowsError } from '../errors';
+export type {
+    CsvValidatorOptions,
+    EmptyCellValue,
+    InvalidRowStrategy,
+    ResolvedOptions,
+} from '../types';
+export {
+    CsvRowError,
+    MissingColumnsError,
+    RowParseError,
+    RowValidationError,
+    TooManyInvalidRowsError,
+} from '../errors';
 export { detectDelimiter } from '../detect';
+export { batched } from './batch';
+export { parseCsv } from './one-shot';
+export type { ParseCsvResult } from './one-shot';
 
 export interface CsvValidatorStream<Out> extends ReadableWritablePair<Out, Uint8Array> {
-    readonly errors: readonly RowValidationError[];
+    readonly errors: readonly CsvRowError[];
 }
 
 interface Source {
@@ -23,7 +45,7 @@ interface Source {
 }
 
 /**
- * Reads just enough of the stream to see one line, then hands back the
+ * Reads just enough of the stream to sample a few lines, then hands back the
  * delimiter together with a stream that replays what was read.
  */
 async function sniff(
@@ -31,10 +53,15 @@ async function sniff(
     options: ResolvedOptions
 ): Promise<Source> {
     const reader = readable.getReader();
-    const scanner = createLineScanner(byteOf(options.quote, 0x22), byteOf(options.comment));
+    const quote = byteOf(options.quote, 0x22);
+    const scanner = createLineScanner({
+        quote,
+        escape: byteOf(options.escape, quote),
+        comment: byteOf(options.comment),
+        lines: SNIFF_LINES,
+    });
     const head: Uint8Array[] = [];
     let size = 0;
-    let end = -1;
     let drained = false;
 
     while (size < SNIFF_LIMIT) {
@@ -47,16 +74,20 @@ async function sniff(
 
         head.push(value);
         size += value.length;
-        end = scanner.push(value);
 
-        if (end !== -1) break;
+        if (scanner.push(value)) break;
     }
 
     const buffered = concat(head);
-    const sample = buffered.subarray(scanner.start, end === -1 ? buffered.length : end);
+
+    if (drained || !scanner.ranges.length) scanner.finish(buffered.length);
 
     return {
-        delimiter: detectDelimiter(sample, options.quote),
+        delimiter: detectDelimiter(
+            sampleOf(buffered, scanner.ranges),
+            options.quote,
+            options.escape
+        ),
         stream: new ReadableStream<Uint8Array>({
             start(controller) {
                 if (buffered.length) controller.enqueue(buffered);
@@ -73,15 +104,26 @@ async function sniff(
     };
 }
 
-function validator<S extends ZodType>(schema: S, options: ResolvedOptions) {
+function validator<S extends ZodType>(schema: S, options: ResolvedOptions, skips: SkipQueue) {
     const sink = createRowSink(schema, options);
+
+    const deliver = (
+        outcome: RowOutcome<output<S>>,
+        controller: TransformStreamDefaultController<output<S>>
+    ) => {
+        if (outcome.kind === 'fail') throw outcome.error;
+        if (outcome.kind === 'row') controller.enqueue(outcome.row);
+    };
 
     const stream = new TransformStream<ParsedEntry, output<S>>({
         transform(entry, controller) {
-            const outcome = sink.handle(entry);
+            for (const skipped of skips.take(entry.info.records))
+                deliver(sink.skip(skipped), controller);
 
-            if (outcome.kind === 'fail') throw outcome.error;
-            if (outcome.kind === 'row') controller.enqueue(outcome.row);
+            deliver(sink.handle(entry), controller);
+        },
+        flush(controller) {
+            for (const skipped of skips.drain()) deliver(sink.skip(skipped), controller);
         },
     });
 
@@ -104,7 +146,8 @@ export function createCsvValidator<S extends ZodType>(
     options: CsvValidatorOptions = {}
 ): CsvValidatorStream<output<S>> {
     const resolved = resolveOptions(options);
-    const { sink, stream: validate } = validator(schema, resolved);
+    const skips = createSkipQueue();
+    const { sink, stream: validate } = validator(schema, resolved, skips);
     const input = new TransformStream<Uint8Array, Uint8Array>();
 
     void (async () => {
@@ -115,7 +158,7 @@ export function createCsvValidator<S extends ZodType>(
                     : { delimiter: resolved.delimiter, stream: input.readable };
 
             const parser = parse(
-                parserOptions(resolved, source.delimiter)
+                parserOptions(resolved, source.delimiter, skips.add)
             ) as unknown as ReadableWritablePair<ParsedEntry, Uint8Array>;
 
             await source.stream.pipeThrough(parser).pipeTo(validate.writable);

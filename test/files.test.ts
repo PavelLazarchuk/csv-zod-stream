@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { RowValidationError, createCsvValidator } from '../src/index';
 import { createCsvValidator as createWebCsvValidator } from '../src/web/index';
 import type { CsvValidatorOptions } from '../src/index';
+import { validationErrors } from './helpers';
 
 const fixture = (name: string) => join(import.meta.dirname, 'fixtures', name);
 
@@ -74,13 +75,15 @@ describe('real files on disk', () => {
         const { rows, stream } = await fromFile('messy.csv', { onInvalidRow: 'collect' });
 
         expect(rows.map(row => row.id)).toEqual([1, 4]);
-        expect(stream.errors.map(error => ({ line: error.line, record: error.record }))).toEqual([
+        const errors = validationErrors(stream.errors);
+
+        expect(errors.map(error => ({ line: error.line, record: error.record }))).toEqual([
             { line: 3, record: 2 },
             { line: 4, record: 3 },
             { line: 7, record: 5 },
         ]);
-        expect(stream.errors[0]!.zodError.issues[0]!.path).toEqual(['email']);
-        expect(stream.errors[2]!.raw).toContain('blank name');
+        expect(errors[0]!.zodError.issues[0]!.path).toEqual(['email']);
+        expect(errors[2]!.raw).toContain('blank name');
     });
 
     it('stops on the first bad row by default', async () => {

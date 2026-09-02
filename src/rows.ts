@@ -1,27 +1,54 @@
 import type { ZodType, output } from 'zod';
 
-import { RowValidationError, TooManyInvalidRowsError } from './errors';
+import {
+    type CsvRowError,
+    MissingColumnsError,
+    RowParseError,
+    RowValidationError,
+    TooManyInvalidRowsError,
+} from './errors';
+import type { SkipHandler } from './parser';
 import type { ResolvedOptions } from './types';
+
+export type ParsedColumns = readonly (string | { name: string })[];
 
 export interface ParsedEntry {
     record: unknown;
     raw: string;
+    info: { lines: number; records: number; columns?: ParsedColumns };
+}
+
+export interface SkippedEntry {
+    raw: string;
     info: { lines: number; records: number };
+    cause: Error & { code?: string };
 }
 
 export type RowOutcome<Out> =
     | { kind: 'row'; row: Out }
-    | { kind: 'invalid'; error: RowValidationError }
+    | { kind: 'invalid'; error: CsvRowError }
     | { kind: 'fail'; error: Error };
 
 export interface RowSink<Out> {
-    readonly errors: readonly RowValidationError[];
+    readonly errors: readonly CsvRowError[];
     handle(entry: ParsedEntry): RowOutcome<Out>;
+    skip(entry: SkippedEntry): RowOutcome<Out>;
+}
+
+export interface SkipQueue {
+    readonly add: SkipHandler;
+    take(before: number): SkippedEntry[];
+    drain(): SkippedEntry[];
 }
 
 export interface RowLocation {
     line: number;
     raw: string;
+}
+
+interface Located {
+    raw: string;
+    info: { lines: number };
 }
 
 const LF = 0x0a;
@@ -112,7 +139,7 @@ function trimRaw(raw: string, lines: number, trailing: number): string {
     return raw.slice(from, raw.length - trailing);
 }
 
-export function createLineTracker(options: ResolvedOptions): (entry: ParsedEntry) => RowLocation {
+export function createLineTracker(options: ResolvedOptions): (entry: Located) => RowLocation {
     let cursor = -1;
 
     return entry => {
@@ -132,6 +159,102 @@ export function createLineTracker(options: ResolvedOptions): (entry: ParsedEntry
     };
 }
 
+export function createSkipQueue(): SkipQueue {
+    const pending: SkippedEntry[] = [];
+
+    return {
+        add(error, raw) {
+            if (!error) return undefined;
+
+            const context = error as unknown as {
+                raw?: string;
+                lines?: number;
+                records?: number;
+            };
+
+            pending.push({
+                raw: raw ?? context.raw ?? '',
+                info: { lines: context.lines ?? 0, records: context.records ?? 0 },
+                cause: error,
+            });
+
+            return undefined;
+        },
+
+        take(before) {
+            let count = 0;
+            while (count < pending.length && (pending[count] as SkippedEntry).info.records < before)
+                count++;
+
+            return pending.splice(0, count);
+        },
+
+        drain() {
+            return pending.splice(0, pending.length);
+        },
+    };
+}
+
+function columnNames(columns: ParsedColumns | undefined): string[] | undefined {
+    return columns?.map(column => (typeof column === 'string' ? column : column.name));
+}
+
+function requiredColumns(schema: ZodType): string[] | undefined {
+    try {
+        const { shape } = schema as { shape?: Record<string, ZodType> };
+
+        if (!shape || typeof shape !== 'object') return undefined;
+
+        return Object.entries(shape)
+            .filter(([, field]) => !field.safeParse(undefined).success)
+            .map(([key]) => key);
+    } catch {
+        return undefined;
+    }
+}
+
+function createHeaderCheck<S extends ZodType>(
+    schema: S,
+    options: ResolvedOptions
+): ((entry: ParsedEntry) => MissingColumnsError | undefined) | undefined {
+    const { checkHeaders } = options;
+
+    if (checkHeaders === false) return undefined;
+
+    const required = checkHeaders === true ? requiredColumns(schema) : checkHeaders;
+
+    if (!required?.length) return undefined;
+
+    let checked = false;
+
+    return entry => {
+        if (checked) return undefined;
+        checked = true;
+
+        const columns = columnNames(entry.info.columns);
+
+        if (!columns) return undefined;
+
+        const missing = required.filter(name => !columns.includes(name));
+
+        return missing.length ? new MissingColumnsError(missing, columns) : undefined;
+    };
+}
+
+function createEmptyCells(options: ResolvedOptions): ((record: unknown) => void) | undefined {
+    if (options.emptyAs === 'keep') return undefined;
+
+    const replacement = options.emptyAs === 'null' ? null : undefined;
+
+    return record => {
+        if (typeof record !== 'object' || record === null) return;
+
+        const cells = record as Record<string, unknown>;
+
+        for (const key of Object.keys(cells)) if (cells[key] === '') cells[key] = replacement;
+    };
+}
+
 function toError(thrown: unknown): Error {
     return thrown instanceof Error ? thrown : new Error(String(thrown));
 }
@@ -141,35 +264,57 @@ export function createRowSink<S extends ZodType>(
     options: ResolvedOptions
 ): RowSink<output<S>> {
     const { onInvalidRow, maxErrors, onRowError } = options;
-    const errors: RowValidationError[] = [];
+    const errors: CsvRowError[] = [];
     const locate = createLineTracker(options);
+    const checkHeader = createHeaderCheck(schema, options);
+    const emptyCells = createEmptyCells(options);
     let invalid = 0;
+
+    function register(error: CsvRowError): RowOutcome<output<S>> {
+        if (onInvalidRow === 'error') return { kind: 'fail', error };
+
+        invalid++;
+        if (onInvalidRow === 'collect') errors.push(error);
+        onRowError?.(error);
+
+        return invalid > maxErrors
+            ? {
+                  kind: 'fail',
+                  error: new TooManyInvalidRowsError(invalid, maxErrors, errors, error),
+              }
+            : { kind: 'invalid', error };
+    }
 
     return {
         errors,
 
         handle(entry) {
-            const { line, raw } = locate(entry);
-
             try {
+                const missing = checkHeader?.(entry);
+
+                if (missing) return { kind: 'fail', error: missing };
+
+                const { line, raw } = locate(entry);
+
+                emptyCells?.(entry.record);
+
                 const result = schema.safeParse(entry.record);
 
                 if (result.success) return { kind: 'row', row: result.data };
 
-                const error = new RowValidationError(line, entry.info.records, raw, result.error);
+                return register(
+                    new RowValidationError(line, entry.info.records, raw, result.error)
+                );
+            } catch (thrown) {
+                return { kind: 'fail', error: toError(thrown) };
+            }
+        },
 
-                if (onInvalidRow === 'error') return { kind: 'fail', error };
+        skip(entry) {
+            try {
+                const { line, raw } = locate(entry);
 
-                invalid++;
-                if (onInvalidRow === 'collect') errors.push(error);
-                onRowError?.(error);
-
-                return invalid > maxErrors
-                    ? {
-                          kind: 'fail',
-                          error: new TooManyInvalidRowsError(invalid, maxErrors, errors),
-                      }
-                    : { kind: 'invalid', error };
+                return register(new RowParseError(line, raw, entry.cause));
             } catch (thrown) {
                 return { kind: 'fail', error: toError(thrown) };
             }

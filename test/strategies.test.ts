@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { RowValidationError, TooManyInvalidRowsError, createCsvValidator } from '../src/index';
-import type { CsvValidatorOptions } from '../src/index';
-import { collect, sliced } from './helpers';
+import type { CsvRowError, CsvValidatorOptions } from '../src/index';
+import { collect, sliced, validationErrors } from './helpers';
 
 const Row = z.object({ name: z.string(), age: z.coerce.number().int().positive() });
 
@@ -14,7 +14,7 @@ const BAD = 'name,age\na,1\nb,nope\nc,3\n';
 function run(text: string, options: CsvValidatorOptions, chunkSize = 7) {
     const stream = createCsvValidator(Row, options);
     const rows: z.infer<typeof Row>[] = [];
-    const invalid: RowValidationError[] = [];
+    const invalid: CsvRowError[] = [];
 
     stream.on('invalid-row', error => invalid.push(error));
 
@@ -53,7 +53,7 @@ describe("onInvalidRow: 'skip'", () => {
             { name: 'c', age: 3 },
         ]);
         expect(invalid).toHaveLength(1);
-        expect(invalid[0]!.record).toBe(2);
+        expect(validationErrors(invalid)[0]!.record).toBe(2);
         expect(stream.errors).toEqual([]);
     });
 
@@ -76,8 +76,8 @@ describe("onInvalidRow: 'collect'", () => {
         await done;
 
         expect(rows).toEqual([{ name: 'a', age: 1 }]);
-        expect(stream.errors.map(error => error.record)).toEqual([1, 3]);
-        expect(stream.errors[0]!.zodError.issues[0]!.path).toEqual(['age']);
+        expect(validationErrors(stream.errors).map(error => error.record)).toEqual([1, 3]);
+        expect(validationErrors(stream.errors)[0]!.zodError.issues[0]!.path).toEqual(['age']);
     });
 
     it('destroys the stream once maxErrors is exceeded', async () => {

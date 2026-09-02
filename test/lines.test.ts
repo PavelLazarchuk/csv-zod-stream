@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { createCsvValidator } from '../src/index';
 import type { CsvValidatorOptions } from '../src/index';
 import { createCsvValidator as createWebCsvValidator } from '../src/web/index';
-import { sliced } from './helpers';
+import { sliced, validationErrors } from './helpers';
 
 const Row = z.object({ name: z.string(), age: z.coerce.number() });
 
@@ -16,7 +16,11 @@ async function positions(text: string, options: CsvValidatorOptions = {}, chunkS
         for await (const _row of source);
     });
 
-    return stream.errors.map(error => ({ line: error.line, record: error.record, raw: error.raw }));
+    return validationErrors(stream.errors).map(error => ({
+        line: error.line,
+        record: error.record,
+        raw: error.raw,
+    }));
 }
 
 describe('physical line numbers', () => {
@@ -72,7 +76,7 @@ describe('physical line numbers', () => {
             }
         );
 
-        expect(stream.errors.map(error => [error.line, error.record, error.raw])).toEqual([
+        expect(validationErrors(stream.errors).map(e => [e.line, e.record, e.raw])).toEqual([
             [3, 2, ''],
         ]);
     });
