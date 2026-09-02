@@ -58,13 +58,39 @@ function endsWithBreak(text: string): boolean {
     return last === LF || last === CR;
 }
 
-function fieldBreaks(record: unknown): number {
-    if (typeof record !== 'object' || record === null) return 0;
+function lineEnd(text: string, from: number): number {
+    for (let i = from; i < text.length; i++) {
+        const code = text.charCodeAt(i);
 
+        if (code === LF || code === CR) return i;
+    }
+
+    return text.length;
+}
+
+/**
+ * Counts the comment and blank lines the parser stepped over on the way to this
+ * record. They sit at the front of `raw`, and the record's own first line can be
+ * neither — the parser would have stepped over that one too.
+ *
+ * Reading them off `raw` rather than off the parsed values keeps the position
+ * right for fields the parser dropped, such as the extra columns of a ragged
+ * record under `relaxColumnCount`.
+ */
+function leadingSkipped(raw: string, options: ResolvedOptions): number {
+    const { comment, skipEmptyLines, trim } = options;
     let count = 0;
+    let from = 0;
 
-    for (const value of Object.values(record)) {
-        if (typeof value === 'string') count += lineBreaks(value);
+    while (from < raw.length) {
+        const end = lineEnd(raw, from);
+        const line = raw.slice(from, end);
+
+        if (comment !== undefined && comment !== '' && line.startsWith(comment)) count++;
+        else if (skipEmptyLines && (trim ? line.trim() : line) === '') count++;
+        else break;
+
+        from = end + (raw.charCodeAt(end) === CR && raw.charCodeAt(end + 1) === LF ? 2 : 1);
     }
 
     return count;
@@ -86,7 +112,7 @@ function trimRaw(raw: string, lines: number, trailing: number): string {
     return raw.slice(from, raw.length - trailing);
 }
 
-export function createLineTracker(): (entry: ParsedEntry) => RowLocation {
+export function createLineTracker(options: ResolvedOptions): (entry: ParsedEntry) => RowLocation {
     let cursor = -1;
 
     return entry => {
@@ -97,7 +123,7 @@ export function createLineTracker(): (entry: ParsedEntry) => RowLocation {
 
         const total = lineBreaks(raw);
         const end = cursor + total - trailing;
-        const line = Math.max(end - fieldBreaks(entry.record), cursor);
+        const line = Math.min(cursor + leadingSkipped(raw, options), Math.max(end, cursor));
         const location = { line, raw: trimRaw(raw, line - cursor, trailing) };
 
         cursor += total;
@@ -116,7 +142,7 @@ export function createRowSink<S extends ZodType>(
 ): RowSink<output<S>> {
     const { onInvalidRow, maxErrors, onRowError } = options;
     const errors: RowValidationError[] = [];
-    const locate = createLineTracker();
+    const locate = createLineTracker(options);
     let invalid = 0;
 
     return {

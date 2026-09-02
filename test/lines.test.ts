@@ -91,6 +91,27 @@ describe('physical line numbers', () => {
         ]);
     });
 
+    it('places a ragged record whose dropped column spans lines', async () => {
+        const Noted = z.object({ name: z.string(), note: z.string(), age: z.coerce.number() });
+        const stream = createCsvValidator(Noted, {
+            onInvalidRow: 'collect',
+            relaxColumnCount: true,
+        });
+
+        await pipeline(
+            sliced('name,note,age\na,n,x,"drop\nme"\nb,n,y\n', 6),
+            stream,
+            async (source: AsyncIterable<unknown>) => {
+                for await (const _row of source);
+            }
+        );
+
+        expect(stream.errors.map(error => [error.line, error.raw])).toEqual([
+            [2, 'a,n,x,"drop\nme"'],
+            [4, 'b,n,y'],
+        ]);
+    });
+
     it('agrees between the Node and the web build', async () => {
         const text = 'name,age\n\n# c\na,"multi\nline"\nb,x\n';
         const Noted = z.object({ name: z.string(), age: z.coerce.number() });

@@ -36,6 +36,7 @@ export function createLineScanner(quote = QUOTE, comment = -1): LineScanner {
     let found = -1;
     let start = 0;
     let head = -1;
+    let afterCr = false;
 
     return {
         get start() {
@@ -51,15 +52,26 @@ export function createLineScanner(quote = QUOTE, comment = -1): LineScanner {
 
                 if (offset < BOM.length && byte === BOM[offset]) continue;
 
+                if (afterCr) {
+                    afterCr = false;
+
+                    if (byte === LF) {
+                        start = offset + 1;
+                        continue;
+                    }
+                }
+
                 if (byte === quote) {
                     quoted = !quoted;
                     if (head === -1) head = byte;
-                } else if (byte === LF && !quoted) {
+                } else if ((byte === LF || byte === CR) && !quoted) {
+                    afterCr = byte === CR;
+
                     if (head !== -1 && head !== comment) return (found = offset);
 
                     start = offset + 1;
                     head = -1;
-                } else if (head === -1 && byte !== CR) head = byte;
+                } else if (head === -1) head = byte;
             }
 
             scanned += chunk.length;

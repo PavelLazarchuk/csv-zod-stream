@@ -40,6 +40,13 @@ describe('createLineScanner', () => {
         expect(scanner.start).toBe(13);
     });
 
+    it('ends a line on a lone CR', () => {
+        const scanner = createLineScanner(0x22, 0x23);
+
+        expect(scanner.push(bytes('# a,b,c,d\rname;note\ra;b\r'))).toBe(19);
+        expect(scanner.start).toBe(10);
+    });
+
     it('skips a leading BOM before deciding a line is a comment', () => {
         const scanner = createLineScanner(0x22, 0x23);
 
@@ -118,6 +125,13 @@ describe("delimiter: 'auto'", () => {
 
     it('looks past comment and blank lines to find the header', async () => {
         const text = '# a, b, c\n\nname;note\na;b\n';
+        const rows = await collect(Row, text, { delimiter: 'auto', comment: '#' });
+
+        expect(rows).toEqual([{ name: 'a', note: 'b' }]);
+    });
+
+    it('sniffs a file with CR-only line endings', async () => {
+        const text = '# a, b, c, d\rname;note\ra;b\r';
         const rows = await collect(Row, text, { delimiter: 'auto', comment: '#' });
 
         expect(rows).toEqual([{ name: 'a', note: 'b' }]);
