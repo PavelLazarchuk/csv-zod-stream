@@ -1,5 +1,8 @@
 # csv-zod-stream
 
+[![npm version](https://img.shields.io/npm/v/csv-zod-stream.svg)](https://www.npmjs.com/package/csv-zod-stream)
+[![npm downloads](https://img.shields.io/npm/dm/csv-zod-stream.svg)](https://www.npmjs.com/package/csv-zod-stream)
+
 Streaming CSV/TSV parsing with per-row [Zod](https://zod.dev) validation — a real Node.js `Transform` on top of [`csv-parse`](https://csv.js.org/parse/), plus a Web Streams build for Deno, Bun and edge runtimes.
 
 ```ts
