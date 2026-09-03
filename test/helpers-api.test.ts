@@ -50,6 +50,19 @@ describe('parseCsv', () => {
         );
     });
 
+    it('still collects when the strategy is left undefined', async () => {
+        const { rows, errors } = await parseCsv(MIXED, Row, { onInvalidRow: undefined });
+        const web = await webParseCsv(MIXED, Row, { onInvalidRow: undefined });
+
+        expect(rows).toEqual([
+            { name: 'a', age: 1 },
+            { name: 'c', age: 3 },
+        ]);
+        expect(errors).toHaveLength(1);
+        expect(web.rows).toEqual(rows);
+        expect(web.errors).toHaveLength(1);
+    });
+
     it('sniffs and passes options through like the stream does', async () => {
         const { rows } = await parseCsv('name;age\na;1\n', Row, { delimiter: 'auto' });
 

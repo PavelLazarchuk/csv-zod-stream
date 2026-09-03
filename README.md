@@ -281,7 +281,7 @@ This build reaches Web Streams through `csv-parse/stream`, which imports them fr
 | `trim`                 | `false`    | Trim whitespace around unquoted fields                                    |
 | `quote`                | `'"'`      | Quote character                                                           |
 | `escape`               | `'"'`      | Escape character inside quoted fields                                     |
-| `comment`              | —          | Ignore lines starting with this character                                 |
+| `comment`              | —          | Treat this character and the rest of its line as a comment                |
 | `parse`                | —          | Raw [`csv-parse` options](https://csv.js.org/parse/options/)              |
 
 ### `parse` — the escape hatch
@@ -295,6 +295,8 @@ createCsvValidator(Employee, {
 ```
 
 The options above win over their `parse` equivalents when you set them, and fill in from `parse` when you do not. Four are the library's own and cannot be taken over: `delimiter`, `columns`, `info` and `raw` — the line numbers are built out of the last two.
+
+`comment` is `csv-parse`'s: the character opens a comment wherever it appears outside a quoted field, so `a,1 # note` parses `age` as `1`, not `1 # note`. Pass `parse: { comment_no_infix: true }` to have it count only at the start of a line.
 
 ## Not yet
 

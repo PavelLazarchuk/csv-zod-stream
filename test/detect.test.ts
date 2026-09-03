@@ -62,6 +62,14 @@ describe('createLineScanner ranges', () => {
         expect(scanner.ranges).toEqual([{ start: 7, end: 10 }]);
     });
 
+    it('does not mistake a stray 0xef for the start of a BOM', () => {
+        const input = bytes('\uFB01rst;b\nx;y\n');
+        const scanner = createLineScanner({ lines: 2 });
+
+        expect(scanner.push(input)).toBe(true);
+        expect(new TextDecoder().decode(sampleOf(input, scanner.ranges))).toBe('\uFB01rst;b\nx;y');
+    });
+
     it('tracks a custom quote character', () => {
         const scanner = createLineScanner({ quote: 0x27 });
 

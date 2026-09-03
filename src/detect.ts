@@ -55,6 +55,8 @@ export function createLineScanner(options: ScannerOptions = {}): LineScanner {
     let head = -1;
     let afterCr = false;
     let done = false;
+    let bom = 0;
+    let atBom = true;
 
     return {
         ranges,
@@ -72,9 +74,19 @@ export function createLineScanner(options: ScannerOptions = {}): LineScanner {
                 const byte = chunk[i] as number;
                 const offset = scanned + i;
 
-                if (offset < BOM.length && byte === BOM[offset]) {
-                    start = offset + 1;
-                    continue;
+                // Only a whole BOM sitting at the very front is one; a stray
+                // 0xef further in is the lead byte of a character.
+                if (atBom) {
+                    if (offset === bom && byte === BOM[bom]) {
+                        if (++bom === BOM.length) {
+                            start = offset + 1;
+                            atBom = false;
+                        }
+
+                        continue;
+                    }
+
+                    atBom = false;
                 }
 
                 if (afterCr) {

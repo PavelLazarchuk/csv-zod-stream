@@ -5,6 +5,33 @@ import { collect } from './helpers';
 
 const Row = z.object({ name: z.string(), note: z.string() });
 
+describe('row output', () => {
+    it('refuses to stream a schema that outputs null', async () => {
+        const Nullish = z
+            .object({ name: z.string(), note: z.string() })
+            .transform(row => (row.name === 'b' ? null : row));
+
+        const failure = await collect(Nullish, 'name,note\na,x\nb,y\nc,z\n').catch(
+            (error: Error) => error
+        );
+
+        expect(failure).toBeInstanceOf(TypeError);
+        expect((failure as Error).message).toMatch(/outputs null/);
+    });
+
+    it('streams a schema that outputs undefined', async () => {
+        const Undefined = z
+            .object({ name: z.string(), note: z.string() })
+            .transform(row => (row.name === 'b' ? undefined : row));
+
+        expect(await collect(Undefined, 'name,note\na,x\nb,y\nc,z\n')).toEqual([
+            { name: 'a', note: 'x' },
+            undefined,
+            { name: 'c', note: 'z' },
+        ]);
+    });
+});
+
 describe('chunk boundaries', () => {
     it('keeps a quoted field with a newline together across 5-byte chunks', async () => {
         const rows = await collect(Row, 'name,note\na,"line one\nline two"\nb,plain\n');

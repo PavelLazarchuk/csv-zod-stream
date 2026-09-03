@@ -5,15 +5,12 @@ import type { ZodType, output } from 'zod';
 
 import type { CsvRowError } from './errors';
 import { createCsvValidator } from './transform';
+import { collecting } from './types';
 import type { CsvValidatorOptions } from './types';
 
 export interface ParseCsvResult<Out> {
     rows: Out[];
     errors: readonly CsvRowError[];
-}
-
-function collecting(options: CsvValidatorOptions): CsvValidatorOptions {
-    return { onInvalidRow: 'collect', ...options };
 }
 
 async function drain<S extends ZodType>(

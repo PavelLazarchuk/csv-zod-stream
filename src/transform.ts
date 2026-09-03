@@ -199,7 +199,15 @@ export class ZodCsvTransform<S extends ZodType> extends Transform {
         }
 
         if (outcome.kind === 'invalid') this.emit('invalid-row', outcome.error);
-        else this.push(outcome.row);
+        else if (outcome.row === null) {
+            this.#abort(
+                new TypeError(
+                    'A schema that outputs null cannot be streamed: null ends a Node object-mode stream. Have the schema output undefined, or another placeholder, instead.'
+                )
+            );
+
+            return false;
+        } else this.push(outcome.row);
 
         return true;
     }

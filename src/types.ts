@@ -39,6 +39,10 @@ export interface ResolvedOptions extends CsvValidatorOptions {
     trim: boolean;
 }
 
+export function collecting(options: CsvValidatorOptions): CsvValidatorOptions {
+    return { ...options, onInvalidRow: options.onInvalidRow ?? 'collect' };
+}
+
 function asString(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
 }

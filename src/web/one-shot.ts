@@ -1,6 +1,7 @@
 import type { ZodType, output } from 'zod';
 
 import type { CsvRowError } from '../errors';
+import { collecting } from '../types';
 import type { CsvValidatorOptions } from '../types';
 import { createCsvValidator } from './index';
 
@@ -19,7 +20,7 @@ export async function parseCsv<S extends ZodType>(
     options: CsvValidatorOptions = {}
 ): Promise<ParseCsvResult<output<S>>> {
     const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : input;
-    const validator = createCsvValidator(schema, { onInvalidRow: 'collect', ...options });
+    const validator = createCsvValidator(schema, collecting(options));
     const rows: output<S>[] = [];
 
     const source = new ReadableStream<Uint8Array>({
