@@ -11,4 +11,14 @@ export {
     TooManyInvalidRowsError,
 } from './errors';
 export { detectDelimiter } from './detect';
-export type { CsvValidatorOptions, EmptyCellValue, InvalidRowStrategy } from './types';
+export { rejectsCsv } from './rejects';
+export type { RejectsCsvOptions } from './rejects';
+export type {
+    CsvRow,
+    CsvValidatorOptions,
+    EmptyCellValue,
+    HeaderCase,
+    HeaderMapper,
+    InvalidRowStrategy,
+    MetaOptions,
+} from './types';

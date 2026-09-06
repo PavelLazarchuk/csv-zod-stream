@@ -1,8 +1,18 @@
 import type { CsvError, Options } from 'csv-parse';
 
+import { createHeaderMapper } from './headers';
 import type { ResolvedOptions } from './types';
 
 export type SkipHandler = (error: CsvError | undefined, raw: string | undefined) => undefined;
+
+function columnsOf(options: ResolvedOptions): Options['columns'] {
+    const map = createHeaderMapper(options);
+
+    if (!map) return options.headers;
+    if (options.headers === true) return (record: string[]) => record.map((h, i) => map(h, i));
+
+    return options.headers.map((h, i) => map(h, i));
+}
 
 /**
  * Maps the public options onto `csv-parse`, on top of whatever `options.parse`
@@ -16,7 +26,7 @@ export function parserOptions(
 ): Options {
     const controlled: Options = {
         delimiter,
-        columns: options.headers,
+        columns: columnsOf(options),
         bom: options.bom,
         skip_empty_lines: options.skipEmptyLines,
         relax_column_count: options.relaxColumnCount,
@@ -26,6 +36,7 @@ export function parserOptions(
         raw: true,
     };
 
+    if (options.encoding !== undefined) controlled.encoding = 'utf8';
     if (options.quote !== undefined) controlled.quote = options.quote;
     if (options.escape !== undefined) controlled.escape = options.escape;
     if (options.comment !== undefined) controlled.comment = options.comment;

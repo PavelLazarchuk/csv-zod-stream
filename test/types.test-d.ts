@@ -3,8 +3,8 @@ import { pipeline } from 'node:stream/promises';
 import { assertType, describe, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
 
-import { batched, createCsvValidator, parseCsv } from '../src/index';
-import type { CsvRowError } from '../src/index';
+import { batched, createCsvValidator, parseCsv, parseCsvFile } from '../src/index';
+import type { CsvRow, CsvRowError } from '../src/index';
 import { createCsvValidator as createWebCsvValidator } from '../src/web/index';
 import { batched as webBatched } from '../src/web/index';
 
@@ -42,6 +42,30 @@ describe('types', () => {
     it('groups rows into arrays of the row type', () => {
         expectTypeOf(webBatched<Row>(2).readable).toEqualTypeOf<ReadableStream<Row[]>>();
         batched<Row>(2).on('data', batch => expectTypeOf(batch).toEqualTypeOf<Row[]>());
+    });
+
+    it('wraps the row type when withMeta is on', async () => {
+        const stream = createCsvValidator(Row, { withMeta: true });
+
+        stream.on('data', row => expectTypeOf(row).toEqualTypeOf<CsvRow<Row>>());
+
+        const { rows } = await parseCsv('id,name\n1,a\n', Row, { withMeta: true });
+
+        expectTypeOf(rows).toEqualTypeOf<CsvRow<Row>[]>();
+
+        const fromFile = await parseCsvFile('x.csv', Row, { withMeta: true });
+
+        expectTypeOf(fromFile.rows).toEqualTypeOf<CsvRow<Row>[]>();
+
+        const web = createWebCsvValidator(Row, { withMeta: true });
+
+        expectTypeOf(web.readable).toEqualTypeOf<ReadableStream<CsvRow<Row>>>();
+    });
+
+    it('leaves the row type alone without withMeta', () => {
+        const stream = createCsvValidator(Row, { async: true, encoding: 'latin1' });
+
+        stream.on('data', row => expectTypeOf(row).toEqualTypeOf<Row>());
     });
 
     it('carries the output type, not the input type, through coercion', () => {

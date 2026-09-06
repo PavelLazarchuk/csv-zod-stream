@@ -31,6 +31,9 @@ await pipeline(
 - **A real `Transform`**, so `.pipe()`, `pipeline()` and `for await` all work as you expect.
 - **Physical line numbers on errors**, correct even when records span several lines.
 - **CSV, TSV, semicolon and pipe files**, with an optional delimiter sniffer.
+- **Headers that fit the schema**, folded to camelCase or snake_case, or renamed one by one.
+- **Files that are not UTF-8**, decoded on the way in — `windows-1251`, `latin1`, whatever the export produced.
+- **Async validation**, so a refinement can hit the database while backpressure still holds.
 - **Blank cells that behave**, so `.optional()` and `.nullable()` work without a `preprocess` in every schema.
 - **`csv-parse` under the hood** — quoting, escaping, BOM and CRLF are its problem, not a hand-rolled parser's.
 - **Zod v4 or v3**, typed end to end: the row type is inferred from the schema, after coercion.
@@ -138,6 +141,51 @@ for (const error of rows.errors) {
 
 `line` is a file position, not a record count. Records holding multiline quoted fields push the two apart, which is exactly when a line number is worth having. Blank lines, comment lines and CRLF endings — including a CRLF inside a quoted field — are all accounted for. `raw` is the record's own text: the lines skipped ahead of it and its trailing line break are cut off.
 
+### A rejects file
+
+An import is usually expected to hand back the rows it would not take. `rejectsCsv` renders the
+collected errors as a CSV:
+
+```ts
+import { writeFile } from 'node:fs/promises';
+import { rejectsCsv } from 'csv-zod-stream';
+
+const rows = createCsvValidator(Employee, { onInvalidRow: 'collect' });
+
+await pipeline(createReadStream('employees.csv'), rows, sink);
+await writeFile('rejects.csv', rejectsCsv(rows.errors));
+```
+
+```
+line,record,error,code,field,message,raw
+3,2,RowValidationError,,email,Invalid CSV row 2 at line 3 — email: Invalid email address,"2,ada,not-an-email,90"
+```
+
+`record` and `field` are filled in for a row the schema rejected, `code` for one `csv-parse` could
+not read. `delimiter`, `eol` and `header` are all overridable, and `bom: true` prepends a BOM so
+Excel opens the file as UTF-8.
+
+## Async validation
+
+A schema with an async refinement or transform needs `safeParseAsync`, which `async: true` turns on:
+
+```ts
+const Employee = z.object({
+    id: z.coerce.number(),
+    email: z.string().refine(async email => !(await taken(email)), 'already registered'),
+});
+
+createCsvValidator(Employee, { async: true });
+```
+
+Rows are then validated one at a time, in file order, and the reader stops while a row is in
+flight — the same backpressure as the synchronous path, so an async lookup throttles the file
+instead of queueing a million promises. A rejected promise fails the stream with that error;
+an issue the refinement reports is an ordinary invalid row and obeys `onInvalidRow`.
+
+Without `async: true` an async schema fails the stream with zod's own complaint about a
+synchronous parse, which is what it did before this option existed.
+
 ## Blank cells
 
 A blank cell is an empty string, which is not what `.optional()` or `.nullable()` are waiting for. `emptyAs` translates:
@@ -154,6 +202,36 @@ createCsvValidator(Employee, { emptyAs: 'null' }); // '' -> null
 ```
 
 `'undefined'` also lets `.default()` fire. Only a genuinely empty cell is translated — `' '` stays a space, unless `trim` is on.
+
+## Column names
+
+Real files arrive with `"First Name "`, `EMAIL` and `user_id` where the schema says `firstName`.
+`normalizeHeaders` folds the header row before anything else looks at it:
+
+```ts
+createCsvValidator(Employee, { normalizeHeaders: 'camel' }); // 'First Name ' -> firstName
+createCsvValidator(Employee, { normalizeHeaders: 'snake' }); // 'First Name ' -> first_name
+createCsvValidator(Employee, { normalizeHeaders: 'lower' }); // 'EMAIL'       -> email
+createCsvValidator(Employee, { normalizeHeaders: 'trim' }); //  ' email '     -> email
+createCsvValidator(Employee, { normalizeHeaders: (header, index) => header || `column${index}` });
+```
+
+`'camel'` and `'snake'` split on anything that is not a letter or a digit and on a camelCase
+boundary, so `userID` and `User ID` both land on `userId` or `user_id`. Letters outside ASCII are
+letters: `Имя` folds to `имя`, not to nothing.
+
+`columnAliases` renames what folding cannot reach:
+
+```ts
+createCsvValidator(Employee, {
+    normalizeHeaders: 'camel',
+    columnAliases: { 'E-Mail': 'email', 'Annual salary': 'salary' },
+});
+```
+
+An alias is looked up against the header as it appears in the file first, then against its
+normalized form, so either spelling works. Both options apply to an explicit `headers` array too,
+and the columns the header check reports are the renamed ones.
 
 ## Missing columns
 
@@ -192,6 +270,25 @@ for (const error of rows.errors) console.log(error.line, error.name);
 Malformed records then arrive as `RowParseError` through `errors`, `onRowError` and `'invalid-row'`, count against `maxErrors` alongside the invalid rows, and keep their place in the file: the line numbers of the rows behind them stay right. Under `onInvalidRow: 'error'` they still stop the stream, just with a positioned `RowParseError` instead of the parser's own error.
 
 `relaxColumnCount` is the other half of the story: it lets ragged rows reach the schema instead of failing at all.
+
+## Row metadata
+
+`withMeta` wraps every row with where it came from, which is what a `source_line` column in the
+database wants:
+
+```ts
+const rows = createCsvValidator(Employee, { withMeta: true });
+
+for await (const { row, line, record } of rows) await save({ ...row, sourceLine: line });
+```
+
+`line` is the physical line the record starts on and `record` its index among the data rows — the
+same two numbers a `RowValidationError` carries, so a row and the error next to it agree. It works
+on the one-shot helpers, through `batched()`, and on the web build, and the row type follows:
+`CsvRow<Employee>` instead of `Employee`.
+
+Wrapping also gets a schema whose output is `null` through a Node stream, since what is pushed is
+the wrapper, not the row.
 
 ## Batches
 
@@ -236,6 +333,21 @@ createCsvValidator(Employee, { delimiter: 'auto' });
 
 `'auto'` buffers up to five lines that are neither blank nor comments, skipping anything inside quotes, and then looks for the candidate — `,`, `;`, `\t` or `|` — that occurs the same number of times on every one of them. That is what a real delimiter does; a stray separator inside a header field does not, so `Name, full;age` over `a;1` still reads as `;`. If nothing is consistent it falls back to sheer frequency, and then to `,`. It honours `quote` and `escape`. It is still a heuristic — name the delimiter when you know it.
 
+## Encodings
+
+Not every export is UTF-8. `encoding` decodes the bytes on the way in, using the runtime's
+`TextDecoder`, so anything it knows works — `windows-1251`, `windows-1252`, `latin1`, `koi8-r`,
+`utf-16le`:
+
+```ts
+await parseCsvFile('employees.csv', Employee, { encoding: 'windows-1251' });
+```
+
+Decoding is streaming: a character split across two chunks is put back together, not mangled. It
+happens before the delimiter sniffer and before `csv-parse`, so everything downstream keeps seeing
+UTF-8. A leading BOM is stripped unless `bom: false`. When the input to `parseCsv` is already a
+string the option is ignored — there is nothing left to decode.
+
 ## Web Streams
 
 `csv-zod-stream/web` is the same validator over `TransformStream`, with no Node stream machinery in the bundle:
@@ -265,24 +377,29 @@ This build reaches Web Streams through `csv-parse/stream`, which imports them fr
 
 ## Options
 
-| Option                 | Default    | Meaning                                                                   |
-| ---------------------- | ---------- | ------------------------------------------------------------------------- |
-| `delimiter`            | `','`      | Field separator, or `'auto'` to sniff it                                  |
-| `headers`              | `true`     | `true` reads names from the first row; an array names a headerless file   |
-| `checkHeaders`         | `true`     | Fail fast on missing columns; `false` to skip, or an explicit column list |
-| `emptyAs`              | `'keep'`   | Turn blank cells into `undefined` or `null` before validating             |
-| `onInvalidRow`         | `'error'`  | `'error'` \| `'skip'` \| `'collect'`                                      |
-| `maxErrors`            | `Infinity` | Invalid rows tolerated under `'skip'` / `'collect'`                       |
-| `onRowError`           | —          | Called for each invalid row under `'skip'` / `'collect'`                  |
-| `skipRecordsWithError` | `false`    | Route malformed records through the invalid-row channel                   |
-| `bom`                  | `true`     | Strip a leading UTF-8 BOM                                                 |
-| `skipEmptyLines`       | `true`     | Ignore blank lines rather than treating them as records                   |
-| `relaxColumnCount`     | `false`    | Let ragged rows through so the schema judges them                         |
-| `trim`                 | `false`    | Trim whitespace around unquoted fields                                    |
-| `quote`                | `'"'`      | Quote character                                                           |
-| `escape`               | `'"'`      | Escape character inside quoted fields                                     |
-| `comment`              | —          | Treat this character and the rest of its line as a comment                |
-| `parse`                | —          | Raw [`csv-parse` options](https://csv.js.org/parse/options/)              |
+| Option                 | Default    | Meaning                                                                      |
+| ---------------------- | ---------- | ---------------------------------------------------------------------------- |
+| `delimiter`            | `','`      | Field separator, or `'auto'` to sniff it                                     |
+| `headers`              | `true`     | `true` reads names from the first row; an array names a headerless file      |
+| `checkHeaders`         | `true`     | Fail fast on missing columns; `false` to skip, or an explicit column list    |
+| `normalizeHeaders`     | —          | Fold the header row: `'trim'`, `'lower'`, `'snake'`, `'camel'` or a function |
+| `columnAliases`        | —          | Rename file columns onto schema fields                                       |
+| `encoding`             | `'utf-8'`  | Decode the bytes with this encoding before parsing                           |
+| `emptyAs`              | `'keep'`   | Turn blank cells into `undefined` or `null` before validating                |
+| `async`                | `false`    | Validate with `safeParseAsync`, one row at a time                            |
+| `withMeta`             | `false`    | Emit `{ row, line, record }` instead of the row                              |
+| `onInvalidRow`         | `'error'`  | `'error'` \| `'skip'` \| `'collect'`                                         |
+| `maxErrors`            | `Infinity` | Invalid rows tolerated under `'skip'` / `'collect'`                          |
+| `onRowError`           | —          | Called for each invalid row under `'skip'` / `'collect'`                     |
+| `skipRecordsWithError` | `false`    | Route malformed records through the invalid-row channel                      |
+| `bom`                  | `true`     | Strip a leading UTF-8 BOM                                                    |
+| `skipEmptyLines`       | `true`     | Ignore blank lines rather than treating them as records                      |
+| `relaxColumnCount`     | `false`    | Let ragged rows through so the schema judges them                            |
+| `trim`                 | `false`    | Trim whitespace around unquoted fields                                       |
+| `quote`                | `'"'`      | Quote character                                                              |
+| `escape`               | `'"'`      | Escape character inside quoted fields                                        |
+| `comment`              | —          | Treat this character and the rest of its line as a comment                   |
+| `parse`                | —          | Raw [`csv-parse` options](https://csv.js.org/parse/options/)                 |
 
 ### `parse` — the escape hatch
 
@@ -300,7 +417,7 @@ The options above win over their `parse` equivalents when you set them, and fill
 
 ## Not yet
 
-Async validation (`safeParseAsync`), CSV generation from objects, and a browser `File` helper are all out of scope for now.
+CSV generation from objects and a browser `File` helper are both out of scope for now.
 
 ## License
 

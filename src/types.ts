@@ -6,11 +6,26 @@ export type InvalidRowStrategy = 'error' | 'skip' | 'collect';
 
 export type EmptyCellValue = 'keep' | 'undefined' | 'null';
 
+export type HeaderCase = 'trim' | 'lower' | 'snake' | 'camel';
+
+export type HeaderMapper = (header: string, index: number) => string;
+
+export interface CsvRow<Out> {
+    row: Out;
+    line: number;
+    record: number;
+}
+
 export interface CsvValidatorOptions {
     delimiter?: (string & {}) | 'auto';
     headers?: true | string[];
     checkHeaders?: boolean | string[];
+    normalizeHeaders?: HeaderCase | HeaderMapper;
+    columnAliases?: Readonly<Record<string, string>>;
+    encoding?: string;
     emptyAs?: EmptyCellValue;
+    async?: boolean;
+    withMeta?: boolean;
     onInvalidRow?: InvalidRowStrategy;
     maxErrors?: number;
     onRowError?: (error: CsvRowError) => void;
@@ -25,11 +40,15 @@ export interface CsvValidatorOptions {
     parse?: Options;
 }
 
+export type MetaOptions = CsvValidatorOptions & { withMeta: true };
+
 export interface ResolvedOptions extends CsvValidatorOptions {
     delimiter: (string & {}) | 'auto';
     headers: true | string[];
     checkHeaders: boolean | string[];
     emptyAs: EmptyCellValue;
+    async: boolean;
+    withMeta: boolean;
     onInvalidRow: InvalidRowStrategy;
     maxErrors: number;
     skipRecordsWithError: boolean;
@@ -56,6 +75,8 @@ export function resolveOptions(options: CsvValidatorOptions = {}): ResolvedOptio
         headers: options.headers ?? true,
         checkHeaders: options.checkHeaders ?? true,
         emptyAs: options.emptyAs ?? 'keep',
+        async: options.async ?? false,
+        withMeta: options.withMeta ?? false,
         onInvalidRow: options.onInvalidRow ?? 'error',
         maxErrors: options.maxErrors ?? Infinity,
         skipRecordsWithError:

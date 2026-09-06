@@ -1,4 +1,4 @@
-import type { ZodType, output } from 'zod';
+import type { ZodError, ZodType, output } from 'zod';
 
 import {
     type CsvRowError,
@@ -8,7 +8,7 @@ import {
     TooManyInvalidRowsError,
 } from './errors';
 import type { SkipHandler } from './parser';
-import type { ResolvedOptions } from './types';
+import type { CsvRow, ResolvedOptions } from './types';
 
 export type ParsedColumns = readonly (string | { name: string })[];
 
@@ -29,10 +29,18 @@ export type RowOutcome<Out> =
     | { kind: 'invalid'; error: CsvRowError }
     | { kind: 'fail'; error: Error };
 
+export type PendingOutcome<Out> = RowOutcome<Out> | Promise<RowOutcome<Out>>;
+
+type ParseResult<Out> = { success: true; data: Out } | { success: false; error: ZodError };
+
 export interface RowSink<Out> {
     readonly errors: readonly CsvRowError[];
-    handle(entry: ParsedEntry): RowOutcome<Out>;
+    handle(entry: ParsedEntry): PendingOutcome<Out>;
     skip(entry: SkippedEntry): RowOutcome<Out>;
+}
+
+export function isPending<Out>(outcome: PendingOutcome<Out>): outcome is Promise<RowOutcome<Out>> {
+    return typeof (outcome as Promise<RowOutcome<Out>>).then === 'function';
 }
 
 export interface SkipQueue {
@@ -259,18 +267,18 @@ function toError(thrown: unknown): Error {
     return thrown instanceof Error ? thrown : new Error(String(thrown));
 }
 
-export function createRowSink<S extends ZodType>(
+export function createRowSink<S extends ZodType, Out = output<S>>(
     schema: S,
     options: ResolvedOptions
-): RowSink<output<S>> {
-    const { onInvalidRow, maxErrors, onRowError } = options;
+): RowSink<Out> {
+    const { onInvalidRow, maxErrors, onRowError, async: isAsync, withMeta } = options;
     const errors: CsvRowError[] = [];
     const locate = createLineTracker(options);
     const checkHeader = createHeaderCheck(schema, options);
     const emptyCells = createEmptyCells(options);
     let invalid = 0;
 
-    function register(error: CsvRowError): RowOutcome<output<S>> {
+    function register(error: CsvRowError): RowOutcome<Out> {
         if (onInvalidRow === 'error') return { kind: 'fail', error };
 
         invalid++;
@@ -285,6 +293,22 @@ export function createRowSink<S extends ZodType>(
             : { kind: 'invalid', error };
     }
 
+    function judge(
+        result: ParseResult<output<S>>,
+        line: number,
+        record: number,
+        raw: string
+    ): RowOutcome<Out> {
+        if (!result.success)
+            return register(new RowValidationError(line, record, raw, result.error));
+
+        const row = withMeta
+            ? ({ row: result.data, line, record } satisfies CsvRow<output<S>>)
+            : result.data;
+
+        return { kind: 'row', row: row as Out };
+    }
+
     return {
         errors,
 
@@ -295,15 +319,18 @@ export function createRowSink<S extends ZodType>(
                 if (missing) return { kind: 'fail', error: missing };
 
                 const { line, raw } = locate(entry);
+                const record = entry.info.records;
 
                 emptyCells?.(entry.record);
 
-                const result = schema.safeParse(entry.record);
+                if (!isAsync) return judge(schema.safeParse(entry.record), line, record, raw);
 
-                if (result.success) return { kind: 'row', row: result.data };
-
-                return register(
-                    new RowValidationError(line, entry.info.records, raw, result.error)
+                return schema.safeParseAsync(entry.record).then(
+                    result => judge(result, line, record, raw),
+                    (thrown: unknown): RowOutcome<Out> => ({
+                        kind: 'fail',
+                        error: toError(thrown),
+                    })
                 );
             } catch (thrown) {
                 return { kind: 'fail', error: toError(thrown) };
