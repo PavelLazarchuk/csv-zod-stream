@@ -91,13 +91,25 @@ describe("onInvalidRow: 'collect'", () => {
     });
 
     it('applies maxErrors under skip too', async () => {
-        const { done } = run('name,age\nw,no\nx,no\n', { onInvalidRow: 'skip', maxErrors: 0 });
-
-        await expect(done).rejects.toMatchObject({
-            name: 'TooManyInvalidRowsError',
-            count: 1,
-            errors: [],
+        const { stream, done } = run('name,age\nw,no\nx,no\n', {
+            onInvalidRow: 'skip',
+            maxErrors: 0,
         });
+
+        await expect(done).rejects.toMatchObject({ name: 'TooManyInvalidRowsError', count: 1 });
+        expect(stream.errors).toEqual([]);
+    });
+
+    it('carries the errors it kept even though skip collects none', async () => {
+        const { done } = run('name,age\nw,no\nx,no\ny,no\n', {
+            onInvalidRow: 'skip',
+            maxErrors: 2,
+        });
+
+        const failure = (await done.catch((error: Error) => error)) as TooManyInvalidRowsError;
+
+        expect(failure.errors.map(error => error.line)).toEqual([2, 3, 4]);
+        expect(failure.cause.line).toBe(4);
     });
 });
 
@@ -197,5 +209,46 @@ describe('callbacks and schemas that throw', () => {
         await expect(collect(Throwing, 'name,age\na,1\n')).rejects.toMatchObject({
             message: 'plain string',
         });
+    });
+});
+
+describe('keepErrors', () => {
+    const MANY = `name,age\n${Array.from({ length: 20 }, (_, i) => `r${i},no`).join('\n')}\n`;
+
+    it('caps what collect holds on to and counts the rest', async () => {
+        const { done, stream } = run(MANY, { onInvalidRow: 'collect', keepErrors: 5 });
+
+        await done;
+
+        expect(stream.errors).toHaveLength(5);
+        expect(stream.droppedErrors).toBe(15);
+        expect(stream.errors.map(error => error.line)).toEqual([17, 18, 19, 20, 21]);
+    });
+
+    it('keeps everything by default', async () => {
+        const { done, stream } = run(MANY, { onInvalidRow: 'collect' });
+
+        await done;
+
+        expect(stream.errors).toHaveLength(20);
+        expect(stream.droppedErrors).toBe(0);
+    });
+
+    it('holds nothing at zero', async () => {
+        const { done, stream } = run(MANY, { onInvalidRow: 'collect', keepErrors: 0 });
+
+        await done;
+
+        expect(stream.errors).toEqual([]);
+        expect(stream.droppedErrors).toBe(20);
+    });
+
+    it('leaves droppedErrors at zero under skip, which collects nothing', async () => {
+        const { done, stream } = run(MANY, { onInvalidRow: 'skip', keepErrors: 5 });
+
+        await done;
+
+        expect(stream.errors).toEqual([]);
+        expect(stream.droppedErrors).toBe(0);
     });
 });

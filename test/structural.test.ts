@@ -150,12 +150,16 @@ describe('structural errors', () => {
         ]);
     });
 
-    it('names the offending row even when nothing is collected', async () => {
-        const { done } = run('name,age\na,x\nb,y\n', { onInvalidRow: 'skip', maxErrors: 1 });
+    it('names the offending row even under skip, which collects nothing', async () => {
+        const { stream, done } = run('name,age\na,x\nb,y\n', {
+            onInvalidRow: 'skip',
+            maxErrors: 1,
+        });
 
         const failure = (await done.catch((error: Error) => error)) as TooManyInvalidRowsError;
 
-        expect(failure.errors).toEqual([]);
+        expect(stream.errors).toEqual([]);
+        expect(failure.errors.map(error => error.line)).toEqual([2, 3]);
         expect(failure.cause.line).toBe(3);
         expect(failure.cause.raw).toBe('b,y');
     });

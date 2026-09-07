@@ -8,6 +8,7 @@ import { createCsvValidator } from './index';
 export interface ParseCsvResult<Out> {
     rows: Out[];
     errors: readonly CsvRowError[];
+    droppedErrors: number;
 }
 
 /**
@@ -46,5 +47,5 @@ export async function parseCsv<S extends ZodType>(
 
     for await (const row of source.pipeThrough(validator)) rows.push(row);
 
-    return { rows, errors: validator.errors };
+    return { rows, errors: validator.errors, droppedErrors: validator.droppedErrors };
 }

@@ -44,6 +44,7 @@ export type { ParseCsvResult } from './one-shot';
 
 export interface CsvValidatorStream<Out> extends ReadableWritablePair<Out, Uint8Array> {
     readonly errors: readonly CsvRowError[];
+    readonly droppedErrors: number;
 }
 
 interface Source {
@@ -193,6 +194,9 @@ export function createCsvValidator<S extends ZodType>(
         readable: validate.readable,
         get errors() {
             return sink.errors;
+        },
+        get droppedErrors() {
+            return sink.droppedErrors;
         },
     };
 }

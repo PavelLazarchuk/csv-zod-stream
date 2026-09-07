@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { MissingColumnsError, parseCsv } from '../src/index';
+import { MissingColumnsError, createCsvValidator, parseCsv } from '../src/index';
 import { collect } from './helpers';
 
 const Person = z.object({
@@ -155,5 +155,52 @@ describe('parse escape hatch', () => {
         });
 
         expect(sniffed).toEqual([{ name: 'a;b', age: 1 }]);
+    });
+});
+
+describe('option validation', () => {
+    it('rejects an unknown emptyAs', () => {
+        expect(() => createCsvValidator(Person, { emptyAs: 'nul' as 'null' })).toThrow(RangeError);
+        expect(() => createCsvValidator(Person, { emptyAs: 'nul' as 'null' })).toThrow(
+            /Unknown emptyAs "nul" — expected keep, undefined, null/
+        );
+    });
+
+    it('rejects an unknown onInvalidRow', () => {
+        expect(() => createCsvValidator(Person, { onInvalidRow: 'stop' as 'skip' })).toThrow(
+            /Unknown onInvalidRow "stop" — expected error, skip, collect/
+        );
+    });
+
+    it('rejects a negative or NaN maxErrors', () => {
+        expect(() => createCsvValidator(Person, { maxErrors: -1 })).toThrow(
+            /maxErrors must be a non-negative number or Infinity/
+        );
+        expect(() => createCsvValidator(Person, { maxErrors: NaN })).toThrow(RangeError);
+        expect(() => createCsvValidator(Person, { maxErrors: Infinity })).not.toThrow();
+    });
+
+    it('rejects a negative keepErrors', () => {
+        expect(() => createCsvValidator(Person, { keepErrors: -5 })).toThrow(
+            /keepErrors must be a non-negative number or Infinity/
+        );
+    });
+
+    it('rejects an empty delimiter', () => {
+        expect(() => createCsvValidator(Person, { delimiter: '' })).toThrow(
+            /delimiter must be a non-empty string/
+        );
+    });
+
+    it('rejects headers that are not column names', () => {
+        expect(() => createCsvValidator(Person, { headers: [1] as unknown as string[] })).toThrow(
+            /headers must be true or an array of column names/
+        );
+    });
+
+    it('rejects an unknown normalizeHeaders before a byte is read', () => {
+        expect(() =>
+            createCsvValidator(Person, { normalizeHeaders: 'kebab' as 'snake', delimiter: 'auto' })
+        ).toThrow(/Unknown normalizeHeaders "kebab"/);
     });
 });

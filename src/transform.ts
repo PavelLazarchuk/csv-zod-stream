@@ -93,6 +93,10 @@ export class ZodCsvTransform<S extends ZodType, Out = output<S>> extends Transfo
         return this.#sink.errors;
     }
 
+    get droppedErrors(): number {
+        return this.#sink.droppedErrors;
+    }
+
     #open(delimiter: string): Parser {
         const parser = parse(parserOptions(this.#options, delimiter, this.#skips.add));
 

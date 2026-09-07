@@ -105,7 +105,21 @@ await pipeline(createReadStream('employees.csv'), rows, sink);
 for (const error of rows.errors) console.log(error.line, error.zodError.issues);
 ```
 
-`maxErrors` is how many invalid rows to tolerate; the next one destroys the stream with a `TooManyInvalidRowsError`. It carries `count`, `maxErrors`, `errors` (everything collected so far — empty under `'skip'`, which keeps nothing by design) and `cause`, the row that went over the line. It applies to `'skip'` as well.
+`maxErrors` is how many invalid rows to tolerate; the next one destroys the stream with a `TooManyInvalidRowsError`. It carries `count`, `maxErrors`, `errors` (the rows kept so far, under `'skip'` as well as `'collect'`) and `cause`, the row that went over the line. It applies to `'skip'` as well.
+
+### `keepErrors` — the ceiling on what is held in memory
+
+A file that is bad end to end would otherwise put every rejected row and its `ZodError` on the heap, which is exactly what the streaming is there to avoid. `keepErrors` is the cap, `1000` by default; past it the oldest kept error is dropped and `droppedErrors` counts what fell off.
+
+```ts
+const rows = createCsvValidator(Employee, { onInvalidRow: 'collect', keepErrors: 50 });
+
+await pipeline(createReadStream('employees.csv'), rows, sink);
+
+console.log(`${rows.errors.length} kept, ${rows.droppedErrors} dropped`);
+```
+
+Pass `Infinity` for the old unbounded behaviour, or `0` to keep none. Under `'skip'` the same window is what fills `TooManyInvalidRowsError.errors`; `.errors` and `.droppedErrors` stay empty and `0`, since `'skip'` collects nothing by design.
 
 Anything thrown while a row is being judged — an `onRowError` that throws, a `.transform()` that throws, a schema with an async refinement that needs `safeParseAsync` — fails the stream with that error instead of escaping as an uncaught exception.
 
@@ -271,6 +285,10 @@ Malformed records then arrive as `RowParseError` through `errors`, `onRowError` 
 
 `relaxColumnCount` is the other half of the story: it lets ragged rows reach the schema instead of failing at all.
 
+### Rows the schema erases
+
+A schema is free to output `undefined` for a row — `.transform(row => (row.draft ? undefined : row))` — and the stream carries it through, since `undefined` is an ordinary object-mode value. Read it with `for await`, which walks values, rather than a `while ((row = stream.read()) != null)` loop, which cannot tell that value from a drained buffer. `null` is the one output that cannot be streamed at all: it ends a Node object-mode stream, so it fails the stream with a `TypeError` instead.
+
 ## Row metadata
 
 `withMeta` wraps every row with where it came from, which is what a `source_line` column in the
@@ -316,7 +334,7 @@ When the whole file fits in memory and you want both halves at once:
 ```ts
 import { parseCsv, parseCsvFile } from 'csv-zod-stream';
 
-const { rows, errors } = await parseCsvFile('employees.csv', Employee);
+const { rows, errors, droppedErrors } = await parseCsvFile('employees.csv', Employee);
 const fromText = await parseCsv('id,name\n1,Ada\n', Employee);
 ```
 
@@ -364,7 +382,7 @@ for await (const employee of response.body.pipeThrough(createCsvValidator(Employ
 
 Backpressure comes from `pipeThrough` itself — nothing is pulled out of the parser until the consumer asks for the next row.
 
-There is no `EventEmitter` here, so pass `onRowError` instead of listening for `'invalid-row'`; `.errors` works the same as on the Node build.
+There is no `EventEmitter` here, so pass `onRowError` instead of listening for `'invalid-row'`; `.errors` and `.droppedErrors` work the same as on the Node build.
 
 ```ts
 const validator = createCsvValidator(Employee, {
@@ -390,6 +408,7 @@ This build reaches Web Streams through `csv-parse/stream`, which imports them fr
 | `withMeta`             | `false`    | Emit `{ row, line, record }` instead of the row                              |
 | `onInvalidRow`         | `'error'`  | `'error'` \| `'skip'` \| `'collect'`                                         |
 | `maxErrors`            | `Infinity` | Invalid rows tolerated under `'skip'` / `'collect'`                          |
+| `keepErrors`           | `1000`     | Invalid rows kept in memory before the oldest is dropped                     |
 | `onRowError`           | —          | Called for each invalid row under `'skip'` / `'collect'`                     |
 | `skipRecordsWithError` | `false`    | Route malformed records through the invalid-row channel                      |
 | `bom`                  | `true`     | Strip a leading UTF-8 BOM                                                    |
@@ -412,6 +431,8 @@ createCsvValidator(Employee, {
 ```
 
 The options above win over their `parse` equivalents when you set them, and fill in from `parse` when you do not. Four are the library's own and cannot be taken over: `delimiter`, `columns`, `info` and `raw` — the line numbers are built out of the last two.
+
+Bad values are refused where you pass them, not where they would eventually misbehave: an unknown `emptyAs`, `onInvalidRow` or `normalizeHeaders`, a negative `maxErrors` or `keepErrors`, an empty `delimiter` and headers that are not strings all throw a `RangeError` out of `createCsvValidator` itself.
 
 `comment` is `csv-parse`'s: the character opens a comment wherever it appears outside a quoted field, so `a,1 # note` parses `age` as `1`, not `1 # note`. Pass `parse: { comment_no_infix: true }` to have it count only at the start of a line.
 

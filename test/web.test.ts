@@ -130,6 +130,23 @@ describe('web streams', () => {
         await expect(drain(source.pipeThrough(validator))).rejects.toThrow('network died');
     });
 
+    it('errors the writable side too, so a manual producer does not hang', async () => {
+        const validator = createCsvValidator(Row);
+        const writer = validator.writable.getWriter();
+
+        void validator.readable
+            .getReader()
+            .read()
+            .catch(() => {});
+
+        const wrote = (async () => {
+            for (let i = 0; i < 100; i++)
+                await writer.write(new TextEncoder().encode('name,note\na,b,c\n'));
+        })();
+
+        await expect(Promise.race([wrote, writer.closed])).rejects.toThrow(/columns length/i);
+    });
+
     it('only pulls what the consumer asks for', async () => {
         let pulls = 0;
         const bytes = new TextEncoder().encode(

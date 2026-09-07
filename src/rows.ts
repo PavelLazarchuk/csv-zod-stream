@@ -35,6 +35,7 @@ type ParseResult<Out> = { success: true; data: Out } | { success: false; error: 
 
 export interface RowSink<Out> {
     readonly errors: readonly CsvRowError[];
+    readonly droppedErrors: number;
     handle(entry: ParsedEntry): PendingOutcome<Out>;
     skip(entry: SkippedEntry): RowOutcome<Out>;
 }
@@ -61,6 +62,8 @@ interface Located {
 
 const LF = 0x0a;
 const CR = 0x0d;
+
+const NO_ERRORS: readonly CsvRowError[] = [];
 
 export function lineBreaks(text: string): number {
     let count = 0;
@@ -263,6 +266,46 @@ function createEmptyCells(options: ResolvedOptions): ((record: unknown) => void)
     };
 }
 
+interface ErrorLog {
+    readonly kept: readonly CsvRowError[];
+    readonly dropped: number;
+    add(error: CsvRowError): void;
+}
+
+function createErrorLog(limit: number): ErrorLog {
+    const ring: CsvRowError[] = [];
+    let cursor = 0;
+    let dropped = 0;
+
+    return {
+        get kept() {
+            return cursor ? [...ring.slice(cursor), ...ring.slice(0, cursor)] : ring;
+        },
+
+        get dropped() {
+            return dropped;
+        },
+
+        add(error) {
+            if (limit < 1) {
+                dropped++;
+
+                return;
+            }
+
+            if (ring.length < limit) {
+                ring.push(error);
+
+                return;
+            }
+
+            ring[cursor] = error;
+            cursor = (cursor + 1) % limit;
+            dropped++;
+        },
+    };
+}
+
 function toError(thrown: unknown): Error {
     return thrown instanceof Error ? thrown : new Error(String(thrown));
 }
@@ -271,8 +314,8 @@ export function createRowSink<S extends ZodType, Out = output<S>>(
     schema: S,
     options: ResolvedOptions
 ): RowSink<Out> {
-    const { onInvalidRow, maxErrors, onRowError, async: isAsync, withMeta } = options;
-    const errors: CsvRowError[] = [];
+    const { onInvalidRow, maxErrors, keepErrors, onRowError, async: isAsync, withMeta } = options;
+    const log = createErrorLog(keepErrors);
     const locate = createLineTracker(options);
     const checkHeader = createHeaderCheck(schema, options);
     const emptyCells = createEmptyCells(options);
@@ -282,13 +325,13 @@ export function createRowSink<S extends ZodType, Out = output<S>>(
         if (onInvalidRow === 'error') return { kind: 'fail', error };
 
         invalid++;
-        if (onInvalidRow === 'collect') errors.push(error);
+        log.add(error);
         onRowError?.(error);
 
         return invalid > maxErrors
             ? {
                   kind: 'fail',
-                  error: new TooManyInvalidRowsError(invalid, maxErrors, errors, error),
+                  error: new TooManyInvalidRowsError(invalid, maxErrors, log.kept, error),
               }
             : { kind: 'invalid', error };
     }
@@ -310,7 +353,13 @@ export function createRowSink<S extends ZodType, Out = output<S>>(
     }
 
     return {
-        errors,
+        get errors() {
+            return onInvalidRow === 'collect' ? log.kept : NO_ERRORS;
+        },
+
+        get droppedErrors() {
+            return onInvalidRow === 'collect' ? log.dropped : 0;
+        },
 
         handle(entry) {
             try {

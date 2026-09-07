@@ -1,6 +1,7 @@
 import type { Options } from 'csv-parse';
 
 import type { CsvRowError } from './errors';
+import { assertHeaderCase } from './headers';
 
 export type InvalidRowStrategy = 'error' | 'skip' | 'collect';
 
@@ -28,6 +29,7 @@ export interface CsvValidatorOptions {
     withMeta?: boolean;
     onInvalidRow?: InvalidRowStrategy;
     maxErrors?: number;
+    keepErrors?: number;
     onRowError?: (error: CsvRowError) => void;
     skipRecordsWithError?: boolean;
     bom?: boolean;
@@ -42,6 +44,8 @@ export interface CsvValidatorOptions {
 
 export type MetaOptions = CsvValidatorOptions & { withMeta: true };
 
+export const DEFAULT_KEPT_ERRORS = 1000;
+
 export interface ResolvedOptions extends CsvValidatorOptions {
     delimiter: (string & {}) | 'auto';
     headers: true | string[];
@@ -51,6 +55,7 @@ export interface ResolvedOptions extends CsvValidatorOptions {
     withMeta: boolean;
     onInvalidRow: InvalidRowStrategy;
     maxErrors: number;
+    keepErrors: number;
     skipRecordsWithError: boolean;
     bom: boolean;
     skipEmptyLines: boolean;
@@ -66,19 +71,59 @@ function asString(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
 }
 
+const EMPTY_AS: readonly EmptyCellValue[] = ['keep', 'undefined', 'null'];
+const STRATEGIES: readonly InvalidRowStrategy[] = ['error', 'skip', 'collect'];
+
+function choice<T extends string>(name: string, value: T, allowed: readonly T[]): T {
+    if (!allowed.includes(value))
+        throw new RangeError(
+            `Unknown ${name} ${JSON.stringify(value)} — expected ${allowed.join(', ')}`
+        );
+
+    return value;
+}
+
+function count(name: string, value: number): number {
+    if (typeof value !== 'number' || Number.isNaN(value) || value < 0)
+        throw new RangeError(
+            `${name} must be a non-negative number or Infinity, got ${String(value)}`
+        );
+
+    return value;
+}
+
+function delimiterOf(value: (string & {}) | 'auto'): (string & {}) | 'auto' {
+    if (typeof value !== 'string' || value === '')
+        throw new RangeError(`delimiter must be a non-empty string or 'auto'`);
+
+    return value;
+}
+
+function checkHeaderOptions(options: CsvValidatorOptions): void {
+    const { normalizeHeaders, headers } = options;
+
+    if (typeof normalizeHeaders === 'string') assertHeaderCase(normalizeHeaders);
+
+    if (Array.isArray(headers) && headers.some(header => typeof header !== 'string'))
+        throw new RangeError('headers must be true or an array of column names');
+}
+
 export function resolveOptions(options: CsvValidatorOptions = {}): ResolvedOptions {
     const { parse } = options;
 
+    checkHeaderOptions(options);
+
     return {
         ...options,
-        delimiter: options.delimiter ?? ',',
+        delimiter: delimiterOf(options.delimiter ?? ','),
         headers: options.headers ?? true,
         checkHeaders: options.checkHeaders ?? true,
-        emptyAs: options.emptyAs ?? 'keep',
+        emptyAs: choice('emptyAs', options.emptyAs ?? 'keep', EMPTY_AS),
         async: options.async ?? false,
         withMeta: options.withMeta ?? false,
-        onInvalidRow: options.onInvalidRow ?? 'error',
-        maxErrors: options.maxErrors ?? Infinity,
+        onInvalidRow: choice('onInvalidRow', options.onInvalidRow ?? 'error', STRATEGIES),
+        maxErrors: count('maxErrors', options.maxErrors ?? Infinity),
+        keepErrors: count('keepErrors', options.keepErrors ?? DEFAULT_KEPT_ERRORS),
         skipRecordsWithError:
             options.skipRecordsWithError ?? parse?.skip_records_with_error ?? false,
         bom: options.bom ?? parse?.bom ?? true,

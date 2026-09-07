@@ -29,6 +29,13 @@ const CASES: Record<HeaderCase, (header: string) => string> = {
     },
 };
 
+export function assertHeaderCase(value: string): asserts value is HeaderCase {
+    if (!Object.hasOwn(CASES, value))
+        throw new RangeError(
+            `Unknown normalizeHeaders ${JSON.stringify(value)} — expected ${Object.keys(CASES).join(', ')} or a function`
+        );
+}
+
 export function createHeaderMapper(options: CsvValidatorOptions): HeaderMapper | undefined {
     const { normalizeHeaders, columnAliases } = options;
 
@@ -38,12 +45,9 @@ export function createHeaderMapper(options: CsvValidatorOptions): HeaderMapper |
 
     if (typeof normalizeHeaders === 'function') normalize = normalizeHeaders;
     else if (normalizeHeaders !== undefined) {
-        const preset = CASES[normalizeHeaders];
+        assertHeaderCase(normalizeHeaders);
 
-        if (!preset)
-            throw new RangeError(
-                `Unknown normalizeHeaders ${JSON.stringify(normalizeHeaders)} — expected ${Object.keys(CASES).join(', ')} or a function`
-            );
+        const preset = CASES[normalizeHeaders];
 
         normalize = header => preset(header);
     }

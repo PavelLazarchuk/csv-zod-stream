@@ -11,6 +11,7 @@ import type { CsvRow, CsvValidatorOptions, MetaOptions } from './types';
 export interface ParseCsvResult<Out> {
     rows: Out[];
     errors: readonly CsvRowError[];
+    droppedErrors: number;
 }
 
 async function drain<S extends ZodType, Out>(
@@ -25,7 +26,7 @@ async function drain<S extends ZodType, Out>(
         for await (const row of validated) rows.push(row);
     });
 
-    return { rows, errors: stream.errors };
+    return { rows, errors: stream.errors, droppedErrors: stream.droppedErrors };
 }
 
 /**
