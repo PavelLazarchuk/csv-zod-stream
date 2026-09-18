@@ -82,7 +82,8 @@ describe('real files on disk', () => {
             { line: 4, record: 3 },
             { line: 7, record: 5 },
         ]);
-        expect(errors[0]!.zodError.issues[0]!.path).toEqual(['email']);
+        expect(errors[0]!.issues[0]!.path).toEqual(['email']);
+        expect(errors[0]!.zodError!.issues[0]!.path).toEqual(['email']);
         expect(errors[2]!.raw).toContain('blank name');
     });
 

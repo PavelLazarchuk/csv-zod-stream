@@ -3,7 +3,6 @@ import type { TransformCallback } from 'node:stream';
 
 import { parse } from 'csv-parse';
 import type { Parser } from 'csv-parse';
-import type { ZodType, output } from 'zod';
 
 import {
     SNIFF_LIMIT,
@@ -21,11 +20,15 @@ import type { CsvRowError } from './errors';
 import { parserOptions } from './parser';
 import { createRowSink, createSkipQueue, isPending } from './rows';
 import type { ParsedEntry, RowOutcome, RowSink, SkipQueue, SkippedEntry } from './rows';
+import type { StandardSchemaV1 } from './standard';
 import { resolveOptions } from './types';
-import type { CsvRow, CsvValidatorOptions, MetaOptions, ResolvedOptions } from './types';
+import type { CsvRow, CsvStats, CsvValidatorOptions, MetaOptions, ResolvedOptions } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export interface ZodCsvTransform<S extends ZodType, Out = output<S>> {
+export interface ZodCsvTransform<
+    S extends StandardSchemaV1,
+    Out = StandardSchemaV1.InferOutput<S>,
+> {
     on(event: 'invalid-row', listener: (error: CsvRowError) => void): this;
     on(event: 'data', listener: (row: Out) => void): this;
     on(event: string | symbol, listener: (...args: any[]) => void): this;
@@ -48,7 +51,10 @@ export interface ZodCsvTransform<S extends ZodType, Out = output<S>> {
  * withheld — so the pressure reaches the file handle instead of the heap.
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- merged with the event typings above
-export class ZodCsvTransform<S extends ZodType, Out = output<S>> extends Transform {
+export class ZodCsvTransform<
+    S extends StandardSchemaV1,
+    Out = StandardSchemaV1.InferOutput<S>,
+> extends Transform {
     readonly #options: ResolvedOptions;
     readonly #sink: RowSink<Out>;
     readonly #skips: SkipQueue;
@@ -95,6 +101,10 @@ export class ZodCsvTransform<S extends ZodType, Out = output<S>> extends Transfo
 
     get droppedErrors(): number {
         return this.#sink.droppedErrors;
+    }
+
+    get stats(): CsvStats {
+        return this.#sink.stats;
     }
 
     #open(delimiter: string): Parser {
@@ -279,6 +289,15 @@ export class ZodCsvTransform<S extends ZodType, Out = output<S>> extends Transfo
         const callback = this.#flushCb;
 
         this.#flushCb = undefined;
+
+        try {
+            this.#sink.end();
+        } catch (thrown) {
+            callback(thrown instanceof Error ? thrown : new Error(String(thrown)));
+
+            return;
+        }
+
         callback();
     }
 
@@ -300,15 +319,15 @@ export class ZodCsvTransform<S extends ZodType, Out = output<S>> extends Transfo
  * });
  * ```
  */
-export function createCsvValidator<S extends ZodType>(
+export function createCsvValidator<S extends StandardSchemaV1>(
     schema: S,
     options: MetaOptions
-): ZodCsvTransform<S, CsvRow<output<S>>>;
-export function createCsvValidator<S extends ZodType>(
+): ZodCsvTransform<S, CsvRow<StandardSchemaV1.InferOutput<S>>>;
+export function createCsvValidator<S extends StandardSchemaV1>(
     schema: S,
     options?: CsvValidatorOptions
 ): ZodCsvTransform<S>;
-export function createCsvValidator<S extends ZodType>(
+export function createCsvValidator<S extends StandardSchemaV1>(
     schema: S,
     options?: CsvValidatorOptions
 ): ZodCsvTransform<S> {

@@ -1,21 +1,23 @@
-import type { ZodError, ZodType, output } from 'zod';
-
 import {
     type CsvRowError,
     MissingColumnsError,
     RowParseError,
     RowValidationError,
     TooManyInvalidRowsError,
+    UnknownColumnsError,
 } from './errors';
 import type { SkipHandler } from './parser';
-import type { CsvRow, ResolvedOptions } from './types';
+import { assertSchema, createValidator } from './standard';
+import type { RowResult, StandardSchemaV1 } from './standard';
+import { suggestions } from './suggest';
+import type { CsvRow, CsvStats, ResolvedOptions } from './types';
 
 export type ParsedColumns = readonly (string | { name: string })[];
 
 export interface ParsedEntry {
     record: unknown;
     raw: string;
-    info: { lines: number; records: number; columns?: ParsedColumns };
+    info: { lines: number; records: number; bytes?: number; columns?: ParsedColumns };
 }
 
 export interface SkippedEntry {
@@ -31,17 +33,23 @@ export type RowOutcome<Out> =
 
 export type PendingOutcome<Out> = RowOutcome<Out> | Promise<RowOutcome<Out>>;
 
-type ParseResult<Out> = { success: true; data: Out } | { success: false; error: ZodError };
-
 export interface RowSink<Out> {
     readonly errors: readonly CsvRowError[];
     readonly droppedErrors: number;
+    readonly stats: CsvStats;
     handle(entry: ParsedEntry): PendingOutcome<Out>;
     skip(entry: SkippedEntry): RowOutcome<Out>;
+    end(): void;
 }
 
 export function isPending<Out>(outcome: PendingOutcome<Out>): outcome is Promise<RowOutcome<Out>> {
     return typeof (outcome as Promise<RowOutcome<Out>>).then === 'function';
+}
+
+function isPendingResult<Out>(
+    result: RowResult<Out> | Promise<RowResult<Out>>
+): result is Promise<RowResult<Out>> {
+    return typeof (result as Promise<RowResult<Out>>).then === 'function';
 }
 
 export interface SkipQueue {
@@ -210,31 +218,74 @@ function columnNames(columns: ParsedColumns | undefined): string[] | undefined {
     return columns?.map(column => (typeof column === 'string' ? column : column.name));
 }
 
-function requiredColumns(schema: ZodType): string[] | undefined {
+function shapeOf(schema: unknown): Record<string, unknown> | undefined {
     try {
-        const { shape } = schema as { shape?: Record<string, ZodType> };
+        const { shape, entries } = schema as {
+            shape?: Record<string, unknown>;
+            entries?: Record<string, unknown>;
+        };
+        const fields = shape ?? entries;
 
-        if (!shape || typeof shape !== 'object') return undefined;
-
-        return Object.entries(shape)
-            .filter(([, field]) => !field.safeParse(undefined).success)
-            .map(([key]) => key);
+        return fields && typeof fields === 'object' ? fields : undefined;
     } catch {
         return undefined;
     }
 }
 
-function createHeaderCheck<S extends ZodType>(
+function optional(field: unknown): boolean | undefined {
+    try {
+        const zod = field as { safeParse?: (value: unknown) => { success: boolean } };
+
+        if (typeof zod.safeParse === 'function') return zod.safeParse(undefined).success;
+
+        const standard = (field as StandardSchemaV1)['~standard'];
+
+        if (typeof standard?.validate !== 'function') return undefined;
+
+        const result = standard.validate(undefined);
+
+        if (typeof (result as Promise<unknown>).then === 'function') {
+            void (result as Promise<unknown>).catch(() => undefined);
+
+            return undefined;
+        }
+
+        return (result as StandardSchemaV1.Result<unknown>).issues === undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function requiredColumns(shape: Record<string, unknown>): string[] | undefined {
+    const required: string[] = [];
+
+    for (const [key, field] of Object.entries(shape)) {
+        const accepts = optional(field);
+
+        if (accepts === undefined) return undefined;
+        if (!accepts) required.push(key);
+    }
+
+    return required;
+}
+
+function createHeaderCheck<S>(
     schema: S,
     options: ResolvedOptions
-): ((entry: ParsedEntry) => MissingColumnsError | undefined) | undefined {
-    const { checkHeaders } = options;
+): ((entry: ParsedEntry) => Error | undefined) | undefined {
+    const { checkHeaders, unknownColumns } = options;
 
     if (checkHeaders === false) return undefined;
 
-    const required = checkHeaders === true ? requiredColumns(schema) : checkHeaders;
+    const shape = checkHeaders === true ? shapeOf(schema) : undefined;
+    const listed = checkHeaders === true ? undefined : checkHeaders;
 
-    if (!required?.length) return undefined;
+    const known = shape ? Object.keys(shape) : listed;
+    const required = shape ? requiredColumns(shape) : listed;
+
+    const wantsUnknown = unknownColumns !== 'ignore' && known !== undefined;
+
+    if (!required?.length && !wantsUnknown) return undefined;
 
     let checked = false;
 
@@ -246,9 +297,28 @@ function createHeaderCheck<S extends ZodType>(
 
         if (!columns) return undefined;
 
-        const missing = required.filter(name => !columns.includes(name));
+        const missing = required?.filter(name => !columns.includes(name)) ?? [];
 
-        return missing.length ? new MissingColumnsError(missing, columns) : undefined;
+        if (missing.length)
+            return new MissingColumnsError(missing, columns, suggestions(missing, columns));
+
+        if (!wantsUnknown) return undefined;
+
+        const unknown = columns.filter(name => !(known as string[]).includes(name));
+
+        if (!unknown.length) return undefined;
+
+        const error = new UnknownColumnsError(
+            unknown,
+            columns,
+            suggestions(unknown, known as string[])
+        );
+
+        if (unknownColumns === 'error') return error;
+
+        console.warn(error.message);
+
+        return undefined;
     };
 }
 
@@ -310,16 +380,65 @@ function toError(thrown: unknown): Error {
     return thrown instanceof Error ? thrown : new Error(String(thrown));
 }
 
-export function createRowSink<S extends ZodType, Out = output<S>>(
+export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1.InferOutput<S>>(
     schema: S,
     options: ResolvedOptions
 ): RowSink<Out> {
-    const { onInvalidRow, maxErrors, keepErrors, onRowError, async: isAsync, withMeta } = options;
+    assertSchema(schema);
+
+    const {
+        onInvalidRow,
+        maxErrors,
+        keepErrors,
+        onRowError,
+        onProgress,
+        progressEveryRecords,
+        progressEveryBytes,
+        async: isAsync,
+        withMeta,
+    } = options;
     const log = createErrorLog(keepErrors);
     const locate = createLineTracker(options);
     const checkHeader = createHeaderCheck(schema, options);
+    const validate = createValidator<Out>(schema, isAsync);
     const emptyCells = createEmptyCells(options);
+    const collects = onInvalidRow === 'collect';
+
+    let bytes = 0;
+    let records = 0;
+    let valid = 0;
     let invalid = 0;
+
+    let lastRecords = 0;
+    let lastBytes = 0;
+
+    const snapshot = (): CsvStats => ({
+        bytes,
+        records,
+        valid,
+        invalid,
+        dropped: collects ? log.dropped : 0,
+    });
+
+    function report(final: boolean): void {
+        if (!onProgress) return;
+
+        const byRecords = records - lastRecords >= progressEveryRecords;
+        const byBytes = progressEveryBytes !== undefined && bytes - lastBytes >= progressEveryBytes;
+
+        if (!final && !byRecords && !byBytes) return;
+        if (final && records === lastRecords && bytes === lastBytes) return;
+
+        lastRecords = records;
+        lastBytes = bytes;
+
+        onProgress(snapshot());
+    }
+
+    function track(info: { records: number; bytes?: number }): void {
+        records = Math.max(records, info.records);
+        if (info.bytes !== undefined) bytes = Math.max(bytes, info.bytes);
+    }
 
     function register(error: CsvRowError): RowOutcome<Out> {
         if (onInvalidRow === 'error') return { kind: 'fail', error };
@@ -337,16 +456,20 @@ export function createRowSink<S extends ZodType, Out = output<S>>(
     }
 
     function judge(
-        result: ParseResult<output<S>>,
+        result: RowResult<Out>,
         line: number,
         record: number,
         raw: string
     ): RowOutcome<Out> {
         if (!result.success)
-            return register(new RowValidationError(line, record, raw, result.error));
+            return register(
+                new RowValidationError(line, record, raw, result.issues, result.zodError)
+            );
+
+        valid++;
 
         const row = withMeta
-            ? ({ row: result.data, line, record } satisfies CsvRow<output<S>>)
+            ? ({ row: result.data, line, record } satisfies CsvRow<Out>)
             : result.data;
 
         return { kind: 'row', row: row as Out };
@@ -354,28 +477,51 @@ export function createRowSink<S extends ZodType, Out = output<S>>(
 
     return {
         get errors() {
-            return onInvalidRow === 'collect' ? log.kept : NO_ERRORS;
+            return collects ? log.kept : NO_ERRORS;
         },
 
         get droppedErrors() {
-            return onInvalidRow === 'collect' ? log.dropped : 0;
+            return collects ? log.dropped : 0;
+        },
+
+        get stats() {
+            return snapshot();
+        },
+
+        end() {
+            report(true);
         },
 
         handle(entry) {
             try {
-                const missing = checkHeader?.(entry);
+                const wrongHeader = checkHeader?.(entry);
 
-                if (missing) return { kind: 'fail', error: missing };
+                if (wrongHeader) return { kind: 'fail', error: wrongHeader };
 
                 const { line, raw } = locate(entry);
                 const record = entry.info.records;
 
                 emptyCells?.(entry.record);
+                track(entry.info);
 
-                if (!isAsync) return judge(schema.safeParse(entry.record), line, record, raw);
+                const result = validate(entry.record);
 
-                return schema.safeParseAsync(entry.record).then(
-                    result => judge(result, line, record, raw),
+                if (!isPendingResult(result)) {
+                    const outcome = judge(result, line, record, raw);
+
+                    report(false);
+
+                    return outcome;
+                }
+
+                return result.then(
+                    settled => {
+                        const outcome = judge(settled, line, record, raw);
+
+                        report(false);
+
+                        return outcome;
+                    },
                     (thrown: unknown): RowOutcome<Out> => ({
                         kind: 'fail',
                         error: toError(thrown),
@@ -390,7 +536,13 @@ export function createRowSink<S extends ZodType, Out = output<S>>(
             try {
                 const { line, raw } = locate(entry);
 
-                return register(new RowParseError(line, raw, entry.cause));
+                track(entry.info);
+
+                const outcome = register(new RowParseError(line, raw, entry.cause));
+
+                report(false);
+
+                return outcome;
             } catch (thrown) {
                 return { kind: 'fail', error: toError(thrown) };
             }

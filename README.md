@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/csv-zod-stream.svg)](https://www.npmjs.com/package/csv-zod-stream)
 [![npm downloads](https://img.shields.io/npm/dm/csv-zod-stream.svg)](https://www.npmjs.com/package/csv-zod-stream)
 
-Streaming CSV/TSV parsing with per-row [Zod](https://zod.dev) validation — a real Node.js `Transform` on top of [`csv-parse`](https://csv.js.org/parse/), plus a Web Streams build for Deno, Bun and edge runtimes.
+Streaming CSV/TSV parsing with per-row [Zod](https://zod.dev) validation — a real Node.js `Transform` on top of [`csv-parse`](https://csv.js.org/parse/), plus a Web Streams build for Deno, Bun and edge runtimes. Zod-first, and since 2.0 any [Standard Schema](https://standardschema.dev) will do: `zod/mini`, Valibot, ArkType.
 
 ```ts
 import { createReadStream } from 'node:fs';
@@ -37,6 +37,8 @@ await pipeline(
 - **Blank cells that behave**, so `.optional()` and `.nullable()` work without a `preprocess` in every schema.
 - **`csv-parse` under the hood** — quoting, escaping, BOM and CRLF are its problem, not a hand-rolled parser's.
 - **Zod v4 or v3**, typed end to end: the row type is inferred from the schema, after coercion.
+- **Or any other Standard Schema** — `zod/mini` for an edge bundle, Valibot, ArkType — with the same types and the same errors.
+- **Progress you can show**, from `stats` on the stream or an `onProgress` callback.
 
 ## Install
 
@@ -44,8 +46,32 @@ await pipeline(
 npm install csv-zod-stream zod
 ```
 
-Node ≥ 20. `zod` is a peer dependency — `^3.20.0 || ^4.0.0`, so a project already on zod 3
-keeps it and a fresh install gets v4. `csv-parse` comes along as a dependency.
+Node ≥ 20. `zod` is an optional peer dependency — `^3.20.0 || ^4.0.0`, so a project already on zod 3
+keeps it and a fresh install gets v4. It is optional because any Standard Schema works; install
+whichever validator you use, or none of them if you pass a schema of your own. `csv-parse` comes
+along as a dependency.
+
+### Any Standard Schema
+
+Everything below is written with Zod, and Zod needs no adapter. The package only ever asks a schema
+to validate one row, which is exactly the [Standard Schema](https://standardschema.dev) contract, so
+`zod/mini` (much smaller in a web or edge bundle), Valibot and ArkType work with no change at the
+call site:
+
+```ts
+import * as v from 'valibot';
+
+const Employee = v.object({
+    id: v.pipe(v.string(), v.transform(Number)),
+    name: v.pipe(v.string(), v.minLength(1)),
+});
+
+createCsvValidator(Employee); // rows are typed v.InferOutput<typeof Employee>
+```
+
+A schema that validates asynchronously is awaited whether or not `async` is set — that option is
+about taking Zod's `safeParseAsync` route. `zodError` on a row error is only there for Zod; read
+`issues` instead, which every schema fills in.
 
 ## Backpressure
 
@@ -92,7 +118,7 @@ The stream is destroyed immediately, so rows still sitting in its buffer are dro
 ```ts
 const rows = createCsvValidator(Employee, { onInvalidRow: 'skip' });
 
-rows.on('invalid-row', error => log.warn(`skipped line ${error.line}`, error.zodError.issues));
+rows.on('invalid-row', error => log.warn(`skipped line ${error.line}`, error.issues));
 ```
 
 ### `'collect'` — drop it, and keep it for later
@@ -102,7 +128,7 @@ const rows = createCsvValidator(Employee, { onInvalidRow: 'collect', maxErrors: 
 
 await pipeline(createReadStream('employees.csv'), rows, sink);
 
-for (const error of rows.errors) console.log(error.line, error.zodError.issues);
+for (const error of rows.errors) console.log(error.line, error.issues);
 ```
 
 `maxErrors` is how many invalid rows to tolerate; the next one destroys the stream with a `TooManyInvalidRowsError`. It carries `count`, `maxErrors`, `errors` (the rows kept so far, under `'skip'` as well as `'collect'`) and `cause`, the row that went over the line. It applies to `'skip'` as well.
@@ -135,7 +161,8 @@ abstract class CsvRowError extends Error {
 
 class RowValidationError extends CsvRowError {
     record: number; // index among the data rows
-    zodError: ZodError;
+    issues: readonly { path: readonly PropertyKey[]; message: string }[];
+    zodError: ZodError | undefined; // only when the schema was Zod
 }
 
 class RowParseError extends CsvRowError {
@@ -144,14 +171,18 @@ class RowParseError extends CsvRowError {
 }
 ```
 
-Narrow with `instanceof` before reaching for `zodError`:
+Narrow with `instanceof` before reaching for `issues`:
 
 ```ts
 for (const error of rows.errors) {
-    if (error instanceof RowValidationError) console.log(error.line, error.zodError.issues);
+    if (error instanceof RowValidationError) console.log(error.line, error.issues);
     else console.log(error.line, error.code);
 }
 ```
+
+`issues` is the same list whichever validator produced it: the path to the field and the message.
+`zodError` is the untouched `ZodError` when the schema was Zod, and `undefined` otherwise — reach for
+it when you want `format()` or a `code`, and check it first.
 
 `line` is a file position, not a record count. Records holding multiline quoted fields push the two apart, which is exactly when a line number is worth having. Blank lines, comment lines and CRLF endings — including a CRLF inside a quoted field — are all accounted for. `raw` is the record's own text: the lines skipped ahead of it and its trailing line break are cut off.
 
@@ -266,6 +297,32 @@ Required means the schema cannot do without it: a field that accepts `undefined`
 
 `MissingColumnsError` stops the stream whatever `onInvalidRow` says — it is a file-level problem, not a row-level one.
 
+## Unknown columns
+
+The mirror of the check above: a file whose `email` column is spelled `emial` has every required column _missing_ and one column _nobody asked for_, and the row errors blame the data. `unknownColumns` looks at that half too:
+
+```ts
+createCsvValidator(Employee, { unknownColumns: 'error' });
+```
+
+| Value      | Meaning                                                            |
+| ---------- | ------------------------------------------------------------------ |
+| `'ignore'` | Default. Extra columns are the schema's business, not the stream's |
+| `'warn'`   | One `console.warn` naming them, then the file runs as usual        |
+| `'error'`  | An `UnknownColumnsError` before the first row, like a missing one  |
+
+`UnknownColumnsError` carries `unknown` (the columns the schema does not define) and `columns` (everything in the file). Like `MissingColumnsError`, it stops the stream whatever `onInvalidRow` says, and it is measured after `normalizeHeaders` and `columnAliases` have had their say — so a renamed column is a known one. `checkHeaders: false` turns this off along with the missing-column check, and an object schema is what both read: a field that is `.optional()` is known, just not required.
+
+### Did you mean
+
+Both header errors name the closest column on the other side, so the message points at the typo instead of describing it:
+
+```
+CSV is missing column email — the file has name, emial — did you mean "emial" for "email"?
+```
+
+The same pairs are on the error as `suggestions`, a `{ wanted: found }` map, for a UI that wants to offer the fix rather than print it. Matching folds case and counts a swap of two neighbouring letters as one edit; the budget grows with the length of the name, so a short column is not matched to an unrelated short column.
+
 ## Structural errors
 
 A record `csv-parse` cannot read — the wrong number of fields, an unterminated quote — is a parse error, not a validation error, and by default it destroys the stream. `skipRecordsWithError` sends it down the same channel as an invalid row instead:
@@ -308,6 +365,41 @@ on the one-shot helpers, through `batched()`, and on the web build, and the row 
 Wrapping also gets a schema whose output is `null` through a Node stream, since what is pushed is
 the wrapper, not the row.
 
+## Progress
+
+A million-row import runs for minutes with nothing to show for it. Every stream carries its own counters, and hands them out on request:
+
+```ts
+const rows = createCsvValidator(Employee, { onInvalidRow: 'collect' });
+
+setInterval(() => {
+    const { bytes, records, valid, invalid } = rows.stats;
+
+    console.log(`${records} records, ${valid} ok, ${invalid} rejected, ${bytes} bytes`);
+}, 1000);
+```
+
+| Field     | Meaning                                                       |
+| --------- | ------------------------------------------------------------- |
+| `bytes`   | Bytes `csv-parse` has read, for a percentage against `size`   |
+| `records` | Records it has produced                                       |
+| `valid`   | Rows the schema accepted                                      |
+| `invalid` | Rows it refused, plus the malformed records that were skipped |
+| `dropped` | Errors `keepErrors` had to let go of                          |
+
+`stats` is a fresh object each time, so it is safe to keep. `onProgress` pushes the same thing instead of polling:
+
+```ts
+const size = (await stat('employees.csv')).size;
+
+createCsvValidator(Employee, {
+    onProgress: ({ bytes, records }) => bar.update(bytes / size, { records }),
+    progressEveryRecords: 5000,
+});
+```
+
+It is called every `progressEveryRecords` records (default `1000`), every `progressEveryBytes` bytes if you name one, and once more at the end of the stream with the final counts — so a bar always reaches the end. A file with no records never calls it at all. Both the Web Streams build and `parseCsv` / `parseCsvFile` carry the same counters; the one-shot helpers return them as `stats` on the result.
+
 ## Batches
 
 Most bulk inserts want arrays, not rows:
@@ -334,7 +426,7 @@ When the whole file fits in memory and you want both halves at once:
 ```ts
 import { parseCsv, parseCsvFile } from 'csv-zod-stream';
 
-const { rows, errors, droppedErrors } = await parseCsvFile('employees.csv', Employee);
+const { rows, errors, droppedErrors, stats } = await parseCsvFile('employees.csv', Employee);
 const fromText = await parseCsv('id,name\n1,Ada\n', Employee);
 ```
 
@@ -400,6 +492,7 @@ This build reaches Web Streams through `csv-parse/stream`, which imports them fr
 | `delimiter`            | `','`      | Field separator, or `'auto'` to sniff it                                     |
 | `headers`              | `true`     | `true` reads names from the first row; an array names a headerless file      |
 | `checkHeaders`         | `true`     | Fail fast on missing columns; `false` to skip, or an explicit column list    |
+| `unknownColumns`       | `'ignore'` | What to do about columns the schema does not define: `'warn'` \| `'error'`   |
 | `normalizeHeaders`     | —          | Fold the header row: `'trim'`, `'lower'`, `'snake'`, `'camel'` or a function |
 | `columnAliases`        | —          | Rename file columns onto schema fields                                       |
 | `encoding`             | `'utf-8'`  | Decode the bytes with this encoding before parsing                           |
@@ -410,6 +503,9 @@ This build reaches Web Streams through `csv-parse/stream`, which imports them fr
 | `maxErrors`            | `Infinity` | Invalid rows tolerated under `'skip'` / `'collect'`                          |
 | `keepErrors`           | `1000`     | Invalid rows kept in memory before the oldest is dropped                     |
 | `onRowError`           | —          | Called for each invalid row under `'skip'` / `'collect'`                     |
+| `onProgress`           | —          | Called with `stats` on the interval below, and once at the end               |
+| `progressEveryRecords` | `1000`     | Records between `onProgress` calls                                           |
+| `progressEveryBytes`   | —          | Bytes between `onProgress` calls, if you would rather pace by size           |
 | `skipRecordsWithError` | `false`    | Route malformed records through the invalid-row channel                      |
 | `bom`                  | `true`     | Strip a leading UTF-8 BOM                                                    |
 | `skipEmptyLines`       | `true`     | Ignore blank lines rather than treating them as records                      |

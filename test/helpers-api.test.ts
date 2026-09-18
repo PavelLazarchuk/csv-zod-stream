@@ -41,7 +41,12 @@ describe('parseCsv', () => {
     });
 
     it('handles an empty input', async () => {
-        expect(await parseCsv('', Row)).toEqual({ rows: [], errors: [], droppedErrors: 0 });
+        expect(await parseCsv('', Row)).toEqual({
+            rows: [],
+            errors: [],
+            droppedErrors: 0,
+            stats: { bytes: 0, records: 0, valid: 0, invalid: 0, dropped: 0 },
+        });
     });
 
     it('still honours an explicit strategy', async () => {

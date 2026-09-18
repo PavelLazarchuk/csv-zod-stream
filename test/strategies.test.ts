@@ -77,7 +77,8 @@ describe("onInvalidRow: 'collect'", () => {
 
         expect(rows).toEqual([{ name: 'a', age: 1 }]);
         expect(validationErrors(stream.errors).map(error => error.record)).toEqual([1, 3]);
-        expect(validationErrors(stream.errors)[0]!.zodError.issues[0]!.path).toEqual(['age']);
+        expect(validationErrors(stream.errors)[0]!.issues[0]!.path).toEqual(['age']);
+        expect(validationErrors(stream.errors)[0]!.zodError!.issues[0]!.path).toEqual(['age']);
     });
 
     it('destroys the stream once maxErrors is exceeded', async () => {
@@ -151,14 +152,14 @@ describe('RowValidationError', () => {
 
         if (result.success) throw new Error('the schema was supposed to reject an empty record');
 
-        const error = new RowValidationError(2, 1, 'raw', result.error);
+        const error = new RowValidationError(2, 1, 'raw', result.error.issues, result.error);
 
         expect(error.message).toMatch(/\+1 more issue\b/);
     });
 
     it('does not choke on a symbol in the issue path', () => {
-        const issue = { code: 'custom', path: [Symbol('tag'), 0], message: 'bad' };
-        const error = new RowValidationError(2, 1, 'raw', { issues: [issue] } as any);
+        const issue = { path: [Symbol('tag'), 0], message: 'bad' };
+        const error = new RowValidationError(2, 1, 'raw', [issue]);
 
         expect(error.message).toContain('Symbol(tag).0: bad');
     });

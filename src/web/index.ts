@@ -1,5 +1,4 @@
 import { parse } from 'csv-parse/stream';
-import type { ZodType, output } from 'zod';
 
 import {
     SNIFF_LIMIT,
@@ -14,12 +13,14 @@ import type { CsvRowError } from '../errors';
 import { parserOptions } from '../parser';
 import { createRowSink, createSkipQueue, isPending } from '../rows';
 import type { ParsedEntry, RowOutcome, SkipQueue } from '../rows';
+import type { StandardSchemaV1 } from '../standard';
 import { resolveOptions } from '../types';
-import type { CsvRow, CsvValidatorOptions, MetaOptions, ResolvedOptions } from '../types';
+import type { CsvRow, CsvStats, CsvValidatorOptions, MetaOptions, ResolvedOptions } from '../types';
 import { decodeStream } from './decode';
 
 export type {
     CsvRow,
+    CsvStats,
     CsvValidatorOptions,
     EmptyCellValue,
     HeaderCase,
@@ -27,6 +28,7 @@ export type {
     InvalidRowStrategy,
     MetaOptions,
     ResolvedOptions,
+    UnknownColumnStrategy,
 } from '../types';
 export {
     CsvRowError,
@@ -34,7 +36,10 @@ export {
     RowParseError,
     RowValidationError,
     TooManyInvalidRowsError,
+    UnknownColumnsError,
 } from '../errors';
+export type { ColumnSuggestions } from '../errors';
+export type { CsvIssue, StandardSchemaV1, ZodErrorLike } from '../standard';
 export { detectDelimiter } from '../detect';
 export { rejectsCsv } from '../rejects';
 export type { RejectsCsvOptions } from '../rejects';
@@ -45,6 +50,7 @@ export type { ParseCsvResult } from './one-shot';
 export interface CsvValidatorStream<Out> extends ReadableWritablePair<Out, Uint8Array> {
     readonly errors: readonly CsvRowError[];
     readonly droppedErrors: number;
+    readonly stats: CsvStats;
 }
 
 interface Source {
@@ -112,7 +118,11 @@ async function sniff(
     };
 }
 
-function validator<S extends ZodType, Out>(schema: S, options: ResolvedOptions, skips: SkipQueue) {
+function validator<S extends StandardSchemaV1, Out>(
+    schema: S,
+    options: ResolvedOptions,
+    skips: SkipQueue
+) {
     const sink = createRowSink<S, Out>(schema, options);
 
     const deliver = (
@@ -136,6 +146,8 @@ function validator<S extends ZodType, Out>(schema: S, options: ResolvedOptions, 
         },
         flush(controller) {
             for (const skipped of skips.drain()) deliver(sink.skip(skipped), controller);
+
+            sink.end();
         },
     });
 
@@ -153,21 +165,25 @@ function validator<S extends ZodType, Out>(schema: S, options: ResolvedOptions, 
  * Backpressure comes from `pipeThrough` itself: nothing is pulled out of the
  * parser until the consumer asks for the next row.
  */
-export function createCsvValidator<S extends ZodType>(
+export function createCsvValidator<S extends StandardSchemaV1>(
     schema: S,
     options: MetaOptions
-): CsvValidatorStream<CsvRow<output<S>>>;
-export function createCsvValidator<S extends ZodType>(
+): CsvValidatorStream<CsvRow<StandardSchemaV1.InferOutput<S>>>;
+export function createCsvValidator<S extends StandardSchemaV1>(
     schema: S,
     options?: CsvValidatorOptions
-): CsvValidatorStream<output<S>>;
-export function createCsvValidator<S extends ZodType>(
+): CsvValidatorStream<StandardSchemaV1.InferOutput<S>>;
+export function createCsvValidator<S extends StandardSchemaV1>(
     schema: S,
     options: CsvValidatorOptions = {}
-): CsvValidatorStream<output<S>> {
+): CsvValidatorStream<StandardSchemaV1.InferOutput<S>> {
     const resolved = resolveOptions(options);
     const skips = createSkipQueue();
-    const { sink, stream: validate } = validator<S, output<S>>(schema, resolved, skips);
+    const { sink, stream: validate } = validator<S, StandardSchemaV1.InferOutput<S>>(
+        schema,
+        resolved,
+        skips
+    );
     const input = new TransformStream<Uint8Array, Uint8Array>();
     const decode = decodeStream(resolved);
 
@@ -197,6 +213,9 @@ export function createCsvValidator<S extends ZodType>(
         },
         get droppedErrors() {
             return sink.droppedErrors;
+        },
+        get stats() {
+            return sink.stats;
         },
     };
 }

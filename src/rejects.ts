@@ -21,7 +21,7 @@ function escape(value: string, delimiter: string): string {
 function fieldsOf(error: CsvRowError): string {
     if (!(error instanceof RowValidationError)) return '';
 
-    const paths = error.zodError.issues
+    const paths = error.issues
         .map(issue => issue.path.map(String).join('.'))
         .filter(path => path !== '');
 

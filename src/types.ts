@@ -11,6 +11,16 @@ export type HeaderCase = 'trim' | 'lower' | 'snake' | 'camel';
 
 export type HeaderMapper = (header: string, index: number) => string;
 
+export type UnknownColumnStrategy = 'ignore' | 'warn' | 'error';
+
+export interface CsvStats {
+    bytes: number;
+    records: number;
+    valid: number;
+    invalid: number;
+    dropped: number;
+}
+
 export interface CsvRow<Out> {
     row: Out;
     line: number;
@@ -21,6 +31,7 @@ export interface CsvValidatorOptions {
     delimiter?: (string & {}) | 'auto';
     headers?: true | string[];
     checkHeaders?: boolean | string[];
+    unknownColumns?: UnknownColumnStrategy;
     normalizeHeaders?: HeaderCase | HeaderMapper;
     columnAliases?: Readonly<Record<string, string>>;
     encoding?: string;
@@ -31,6 +42,9 @@ export interface CsvValidatorOptions {
     maxErrors?: number;
     keepErrors?: number;
     onRowError?: (error: CsvRowError) => void;
+    onProgress?: (stats: CsvStats) => void;
+    progressEveryRecords?: number;
+    progressEveryBytes?: number;
     skipRecordsWithError?: boolean;
     bom?: boolean;
     skipEmptyLines?: boolean;
@@ -46,16 +60,20 @@ export type MetaOptions = CsvValidatorOptions & { withMeta: true };
 
 export const DEFAULT_KEPT_ERRORS = 1000;
 
+export const DEFAULT_PROGRESS_RECORDS = 1000;
+
 export interface ResolvedOptions extends CsvValidatorOptions {
     delimiter: (string & {}) | 'auto';
     headers: true | string[];
     checkHeaders: boolean | string[];
+    unknownColumns: UnknownColumnStrategy;
     emptyAs: EmptyCellValue;
     async: boolean;
     withMeta: boolean;
     onInvalidRow: InvalidRowStrategy;
     maxErrors: number;
     keepErrors: number;
+    progressEveryRecords: number;
     skipRecordsWithError: boolean;
     bom: boolean;
     skipEmptyLines: boolean;
@@ -73,6 +91,7 @@ function asString(value: unknown): string | undefined {
 
 const EMPTY_AS: readonly EmptyCellValue[] = ['keep', 'undefined', 'null'];
 const STRATEGIES: readonly InvalidRowStrategy[] = ['error', 'skip', 'collect'];
+const UNKNOWN_COLUMNS: readonly UnknownColumnStrategy[] = ['ignore', 'warn', 'error'];
 
 function choice<T extends string>(name: string, value: T, allowed: readonly T[]): T {
     if (!allowed.includes(value))
@@ -118,12 +137,25 @@ export function resolveOptions(options: CsvValidatorOptions = {}): ResolvedOptio
         delimiter: delimiterOf(options.delimiter ?? ','),
         headers: options.headers ?? true,
         checkHeaders: options.checkHeaders ?? true,
+        unknownColumns: choice(
+            'unknownColumns',
+            options.unknownColumns ?? 'ignore',
+            UNKNOWN_COLUMNS
+        ),
         emptyAs: choice('emptyAs', options.emptyAs ?? 'keep', EMPTY_AS),
         async: options.async ?? false,
         withMeta: options.withMeta ?? false,
         onInvalidRow: choice('onInvalidRow', options.onInvalidRow ?? 'error', STRATEGIES),
         maxErrors: count('maxErrors', options.maxErrors ?? Infinity),
         keepErrors: count('keepErrors', options.keepErrors ?? DEFAULT_KEPT_ERRORS),
+        progressEveryRecords: count(
+            'progressEveryRecords',
+            options.progressEveryRecords ?? DEFAULT_PROGRESS_RECORDS
+        ),
+        progressEveryBytes:
+            options.progressEveryBytes === undefined
+                ? undefined
+                : count('progressEveryBytes', options.progressEveryBytes),
         skipRecordsWithError:
             options.skipRecordsWithError ?? parse?.skip_records_with_error ?? false,
         bom: options.bom ?? parse?.bom ?? true,
