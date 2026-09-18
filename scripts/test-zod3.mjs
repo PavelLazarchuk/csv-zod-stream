@@ -19,7 +19,7 @@ function install(spec) {
 
 if (install(legacy) !== 0) process.exit(1);
 
-const status = run('npx', ['vitest', 'run']);
+const status = run('npx', ['vitest', 'run', '--config', 'vitest.config.zod3.ts']);
 
 install(`zod@${pkg.devDependencies.zod}`);
 

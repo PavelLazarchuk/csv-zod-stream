@@ -46,7 +46,7 @@ await pipeline(
 npm install csv-zod-stream zod
 ```
 
-Node ≥ 20. `zod` is an optional peer dependency — `^3.20.0 || ^4.0.0`, so a project already on zod 3
+Node ≥ 20. `zod` is an optional peer dependency — `^3.24.0 || ^4.0.0`, so a project already on zod 3.24+
 keeps it and a fresh install gets v4. It is optional because any Standard Schema works; install
 whichever validator you use, or none of them if you pass a schema of your own. `csv-parse` comes
 along as a dependency.

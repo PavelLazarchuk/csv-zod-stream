@@ -1,0 +1,7 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo.zod3"
+    },
+    "exclude": ["test/zod-mini.test.ts"]
+}

@@ -10,6 +10,7 @@ The package never did more with a schema than validate one row, which is exactly
 
 - `RowValidationError.zodError` is now `ZodError | undefined` — `undefined` when the schema was not Zod. The new `RowValidationError.issues` — `{ path, message }[]` — is filled in whatever the schema, and is what `rejectsCsv` now reads for its `field` column. Code that reaches straight for `error.zodError.issues` needs a check, or a move to `error.issues`.
 - The schema type parameter is `StandardSchemaV1` rather than `ZodType`, and the row type comes from `StandardSchemaV1.InferOutput`. Inference for a Zod schema is unchanged; a function that was generic over `ZodType` may need its own bound widened.
+- The `zod` peer range is now `^3.24.0 || ^4.0.0`. Zod 3.24 is the release that added `~standard`, so it is the oldest version the types can accept.
 - `zod` is now an _optional_ peer dependency, and no type in the published `.d.ts` imports from it: `zodError` is typed structurally as `ZodErrorLike`. A caller who wants `ZodError`'s own methods can cast.
 - `createCsvValidator`, `parseCsv` and `parseCsvFile` throw a `TypeError` when handed something that is neither a Zod schema nor a Standard Schema, instead of failing on the first row.
 
