@@ -1,5 +1,39 @@
 # csv-zod-stream
 
+## 2.0.0
+
+### Major Changes
+
+- c30c4a2: Any Standard Schema, not only Zod.
+
+    The package never did more with a schema than validate one row, which is exactly the [Standard Schema](https://standardschema.dev) contract. It now accepts anything that implements it — Zod 3.24+, Zod 4, `zod/mini`, Valibot, ArkType — with the same types, the same errors and no adapter. Zod is still first: it is taken through `safeParse`, so a real `ZodError` is still on the row error, and nothing about a Zod call site changes.
+
+    **Breaking:**
+
+    - `RowValidationError.zodError` is now `ZodError | undefined` — `undefined` when the schema was not Zod. The new `RowValidationError.issues` — `{ path, message }[]` — is filled in whatever the schema, and is what `rejectsCsv` now reads for its `field` column. Code that reaches straight for `error.zodError.issues` needs a check, or a move to `error.issues`.
+    - The schema type parameter is `StandardSchemaV1` rather than `ZodType`, and the row type comes from `StandardSchemaV1.InferOutput`. Inference for a Zod schema is unchanged; a function that was generic over `ZodType` may need its own bound widened.
+    - The `zod` peer range is now `^3.24.0 || ^4.0.0`. Zod 3.24 is the release that added `~standard`, so it is the oldest version the types can accept.
+    - `zod` is now an _optional_ peer dependency, and no type in the published `.d.ts` imports from it: `zodError` is typed structurally as `ZodErrorLike`. A caller who wants `ZodError`'s own methods can cast.
+    - `createCsvValidator`, `parseCsv` and `parseCsvFile` throw a `TypeError` when handed something that is neither a Zod schema nor a Standard Schema, instead of failing on the first row.
+
+    **Also:**
+
+    - A schema that validates asynchronously is awaited whether or not `async` is set. The option still means "take Zod's `safeParseAsync` route".
+    - The header check reads `entries` as well as `shape`, so `zod/mini` and Valibot object schemas get missing-column and unknown-column checking too. A schema whose fields cannot be asked about synchronously is left alone, as before.
+
+    The root entry grows to 6.66 kB gzipped and the web entry to 6.2 kB.
+
+### Minor Changes
+
+- c30c4a2: Progress counters, and the other half of the header check.
+
+    - Every stream now carries `stats`: `{ bytes, records, valid, invalid, dropped }`, a fresh snapshot on each read, on the Node stream, the Web Streams build and the `parseCsv` / `parseCsvFile` result. With `fs.stat().size` that is a percentage without a line of bookkeeping.
+    - New `onProgress(stats)` pushes the same counters instead of being polled, throttled by `progressEveryRecords` (default `1000`) and, if you name one, `progressEveryBytes`. It fires once more at the end of the stream with the final counts, and not at all for a file with no records. A callback that throws fails the stream, the way `onRowError` does, rather than escaping the parse.
+    - New `unknownColumns: 'ignore' | 'warn' | 'error'` (default `'ignore'`) catches the mirror image of a missing column: a header the schema does not define. `'error'` throws `UnknownColumnsError` — carrying `unknown` and `columns` — before the first row, exactly like `MissingColumnsError`.
+    - Both header errors now carry `suggestions`, a `{ wanted: found }` map of the closest name on the other side, and say it in the message: `missing column email — the file has name, emial — did you mean "emial" for "email"?`. Matching folds case and treats a swap of two neighbouring letters as one edit, which is the typo that used to read as a data problem.
+
+    The root entry grows to 6.29 kB gzipped and the web entry to 5.81 kB.
+
 ## 1.4.0
 
 ### Minor Changes
