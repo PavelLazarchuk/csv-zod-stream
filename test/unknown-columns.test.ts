@@ -98,6 +98,20 @@ describe('unknownColumns', () => {
 
         expect(error).toBeInstanceOf(UnknownColumnsError);
     });
+
+    it('catches the column on a file with no data rows', async () => {
+        const error = await failure('name,email,extra\n', { unknownColumns: 'error' });
+
+        expect(error).toBeInstanceOf(UnknownColumnsError);
+    });
+
+    it('catches it on a header-only file in the web build too', async () => {
+        const error = await webParseCsv('name,email,extra\n', Person, {
+            unknownColumns: 'error',
+        }).catch((thrown: unknown) => thrown);
+
+        expect(error).toBeInstanceOf(UnknownColumnsError);
+    });
 });
 
 describe('did you mean', () => {
@@ -141,6 +155,27 @@ describe('did you mean', () => {
         expect(Object.hasOwn(error.suggestions, '__proto__')).toBe(true);
         expect(error.suggestions['__proto__']).toBe('__prote__');
         expect(error.suggestions['constructor']).toBe('constructer');
+    });
+
+    it('passes over a file column the schema has already matched', async () => {
+        const Short = z.object({ a: z.string(), b: z.string() });
+
+        const error = (await parseCsv('a,bb\n1,2\n', Short).catch(
+            (thrown: unknown) => thrown
+        )) as MissingColumnsError;
+
+        expect(error.suggestions).toEqual({ b: 'bb' });
+    });
+
+    it('passes over a schema field the file has already matched', async () => {
+        const Short = z.object({ a: z.string(), b: z.string() });
+
+        const error = (await parseCsv('a,b,ab\n1,2,3\n', Short, {
+            unknownColumns: 'error',
+        }).catch((thrown: unknown) => thrown)) as UnknownColumnsError;
+
+        expect(error.suggestions).toEqual({});
+        expect(error.message).not.toContain('did you mean');
     });
 
     it('allows more edits in a longer name than in a short one', async () => {

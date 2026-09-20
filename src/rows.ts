@@ -37,6 +37,7 @@ export interface RowSink<Out> {
     readonly errors: readonly CsvRowError[];
     readonly droppedErrors: number;
     readonly stats: CsvStats;
+    headers(columns: readonly string[]): void;
     handle(entry: ParsedEntry): PendingOutcome<Out>;
     skip(entry: SkippedEntry): RowOutcome<Out>;
     end(): void;
@@ -272,7 +273,7 @@ function requiredColumns(shape: Record<string, unknown>): string[] | undefined {
 function createHeaderCheck<S>(
     schema: S,
     options: ResolvedOptions
-): ((entry: ParsedEntry) => Error | undefined) | undefined {
+): ((columns: readonly string[] | undefined) => Error | undefined) | undefined {
     const { checkHeaders, unknownColumns } = options;
 
     if (checkHeaders === false) return undefined;
@@ -287,31 +288,28 @@ function createHeaderCheck<S>(
 
     if (!required?.length && !wantsUnknown) return undefined;
 
+    const fields = known as string[];
     let checked = false;
 
-    return entry => {
-        if (checked) return undefined;
+    return columns => {
+        if (checked || !columns) return undefined;
         checked = true;
 
-        const columns = columnNames(entry.info.columns);
-
-        if (!columns) return undefined;
-
+        const unmatched = columns.filter(name => !fields.includes(name));
         const missing = required?.filter(name => !columns.includes(name)) ?? [];
 
         if (missing.length)
-            return new MissingColumnsError(missing, columns, suggestions(missing, columns));
+            return new MissingColumnsError(missing, columns, suggestions(missing, unmatched));
 
-        if (!wantsUnknown) return undefined;
-
-        const unknown = columns.filter(name => !(known as string[]).includes(name));
-
-        if (!unknown.length) return undefined;
+        if (!wantsUnknown || !unmatched.length) return undefined;
 
         const error = new UnknownColumnsError(
-            unknown,
+            unmatched,
             columns,
-            suggestions(unknown, known as string[])
+            suggestions(
+                unmatched,
+                fields.filter(name => !columns.includes(name))
+            )
         );
 
         if (unknownColumns === 'error') return error;
@@ -342,7 +340,8 @@ interface ErrorLog {
     add(error: CsvRowError): void;
 }
 
-function createErrorLog(limit: number): ErrorLog {
+function createErrorLog(keep: number): ErrorLog {
+    const limit = Math.floor(keep);
     const ring: CsvRowError[] = [];
     let cursor = 0;
     let dropped = 0;
@@ -411,6 +410,7 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
 
     let lastRecords = 0;
     let lastBytes = 0;
+    let lastColumns: readonly string[] | undefined;
 
     const snapshot = (): CsvStats => ({
         bytes,
@@ -488,13 +488,21 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
             return snapshot();
         },
 
+        headers(columns) {
+            lastColumns = columns;
+        },
+
         end() {
+            const wrongHeader = checkHeader?.(lastColumns);
+
+            if (wrongHeader) throw wrongHeader;
+
             report(true);
         },
 
         handle(entry) {
             try {
-                const wrongHeader = checkHeader?.(entry);
+                const wrongHeader = checkHeader?.(columnNames(entry.info.columns) ?? lastColumns);
 
                 if (wrongHeader) return { kind: 'fail', error: wrongHeader };
 

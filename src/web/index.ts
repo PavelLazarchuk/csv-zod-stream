@@ -196,7 +196,7 @@ export function createCsvValidator<S extends StandardSchemaV1>(
                     : { delimiter: resolved.delimiter, stream: bytes };
 
             const parser = parse(
-                parserOptions(resolved, source.delimiter, skips.add)
+                parserOptions(resolved, source.delimiter, skips.add, sink.headers)
             ) as unknown as ReadableWritablePair<ParsedEntry, Uint8Array>;
 
             await source.stream.pipeThrough(parser).pipeTo(validate.writable);

@@ -5,13 +5,27 @@ import type { ResolvedOptions } from './types';
 
 export type SkipHandler = (error: CsvError | undefined, raw: string | undefined) => undefined;
 
-function columnsOf(options: ResolvedOptions): Options['columns'] {
+export type ColumnsHandler = (columns: readonly string[]) => void;
+
+function columnsOf(options: ResolvedOptions, onColumns?: ColumnsHandler): Options['columns'] {
     const map = createHeaderMapper(options);
+    const name = (header: string, index: number) => (map ? map(header, index) : header);
 
-    if (!map) return options.headers;
-    if (options.headers === true) return (record: string[]) => record.map((h, i) => map(h, i));
+    if (options.headers !== true) {
+        const named = options.headers.map(name);
 
-    return options.headers.map((h, i) => map(h, i));
+        onColumns?.(named);
+
+        return named;
+    }
+
+    return (record: string[]) => {
+        const named = record.map(name);
+
+        onColumns?.(named);
+
+        return named;
+    };
 }
 
 /**
@@ -22,11 +36,12 @@ function columnsOf(options: ResolvedOptions): Options['columns'] {
 export function parserOptions(
     options: ResolvedOptions,
     delimiter: string,
-    onSkip?: SkipHandler
+    onSkip?: SkipHandler,
+    onColumns?: ColumnsHandler
 ): Options {
     const controlled: Options = {
         delimiter,
-        columns: columnsOf(options),
+        columns: columnsOf(options, onColumns),
         bom: options.bom,
         skip_empty_lines: options.skipEmptyLines,
         relax_column_count: options.relaxColumnCount,

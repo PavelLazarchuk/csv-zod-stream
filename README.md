@@ -295,7 +295,7 @@ try {
 
 Required means the schema cannot do without it: a field that accepts `undefined` — `.optional()`, `.nullish()`, `.default()` — is not a required column. The check needs an object schema to read; anything else (a `z.record`, a schema behind `.refine()`) is left alone. Pass an explicit list to check those, or `false` to turn it off.
 
-`MissingColumnsError` stops the stream whatever `onInvalidRow` says — it is a file-level problem, not a row-level one.
+`MissingColumnsError` stops the stream whatever `onInvalidRow` says — it is a file-level problem, not a row-level one. The header is checked even when no row ever follows it, so a file that is only a wrong header still fails rather than quietly yielding nothing.
 
 ## Unknown columns
 

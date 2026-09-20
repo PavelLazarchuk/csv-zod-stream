@@ -108,7 +108,9 @@ export class ZodCsvTransform<
     }
 
     #open(delimiter: string): Parser {
-        const parser = parse(parserOptions(this.#options, delimiter, this.#skips.add));
+        const parser = parse(
+            parserOptions(this.#options, delimiter, this.#skips.add, this.#sink.headers)
+        );
 
         parser.on('readable', this.#pump);
         parser.on('drain', () => {

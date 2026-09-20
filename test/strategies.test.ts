@@ -244,6 +244,16 @@ describe('keepErrors', () => {
         expect(stream.droppedErrors).toBe(20);
     });
 
+    it('rounds a fractional cap down instead of overshooting it', async () => {
+        const { done, stream } = run(MANY, { onInvalidRow: 'collect', keepErrors: 2.5 });
+
+        await done;
+
+        expect(stream.errors).toHaveLength(2);
+        expect(stream.droppedErrors).toBe(18);
+        expect(stream.errors.map(error => error.line)).toEqual([20, 21]);
+    });
+
     it('leaves droppedErrors at zero under skip, which collects nothing', async () => {
         const { done, stream } = run(MANY, { onInvalidRow: 'skip', keepErrors: 5 });
 

@@ -102,6 +102,36 @@ describe('checkHeaders', () => {
 
         expect(await collect(Loose, 'name,note\na,x\n')).toEqual([{ name: 'a', note: 'x' }]);
     });
+
+    it('still catches a bad header on a file with no data rows', async () => {
+        const failure = await collect(Person, 'name,note\n').catch((error: Error) => error);
+
+        expect(failure).toBeInstanceOf(MissingColumnsError);
+        expect((failure as MissingColumnsError).missing).toEqual(['age']);
+    });
+
+    it('lets a header-only file with the right columns through', async () => {
+        expect(await collect(Person, 'name,age\n')).toEqual([]);
+    });
+
+    it('checks the header even when every record was skipped', async () => {
+        const failure = await collect(Person, 'name,note\n"unclosed,1\n', {
+            skipRecordsWithError: true,
+            onInvalidRow: 'collect',
+        }).catch((error: Error) => error);
+
+        expect(failure).toBeInstanceOf(MissingColumnsError);
+    });
+
+    it('has nothing to check on an empty file', async () => {
+        expect(await collect(Person, '')).toEqual([]);
+    });
+
+    it('suggests a column the schema has not already matched', async () => {
+        const failure = await collect(Person, 'name,aeg\na,1\n').catch((error: Error) => error);
+
+        expect((failure as MissingColumnsError).suggestions).toEqual({ age: 'aeg' });
+    });
 });
 
 describe('parse escape hatch', () => {
