@@ -411,8 +411,7 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
     let lastRecords = 0;
     let lastBytes = 0;
     let lastColumns: readonly string[] | undefined;
-    let headerRead = false;
-    let parsedAnything = false;
+    let sawInput = false;
 
     const snapshot = (): CsvStats => ({
         bytes,
@@ -438,7 +437,7 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
     }
 
     function track(info: { records: number; bytes?: number }): void {
-        parsedAnything = true;
+        sawInput = true;
         records = Math.max(records, info.records);
         if (info.bytes !== undefined) bytes = Math.max(bytes, info.bytes);
     }
@@ -493,12 +492,11 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
 
         headers(columns, origin) {
             lastColumns = columns;
-            headerRead = origin === 'file';
+            if (origin === 'file') sawInput = true;
         },
 
         end() {
-            const wrongHeader =
-                headerRead || parsedAnything ? checkHeader?.(lastColumns) : undefined;
+            const wrongHeader = sawInput ? checkHeader?.(lastColumns) : undefined;
 
             if (wrongHeader) throw wrongHeader;
 
