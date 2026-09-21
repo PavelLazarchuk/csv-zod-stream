@@ -5,7 +5,7 @@ import type { ResolvedOptions } from './types';
 
 export type SkipHandler = (error: CsvError | undefined, raw: string | undefined) => undefined;
 
-export type ColumnsHandler = (columns: readonly string[]) => void;
+export type ColumnsHandler = (columns: readonly string[], origin: 'file' | 'options') => void;
 
 function columnsOf(options: ResolvedOptions, onColumns?: ColumnsHandler): Options['columns'] {
     const map = createHeaderMapper(options);
@@ -14,7 +14,7 @@ function columnsOf(options: ResolvedOptions, onColumns?: ColumnsHandler): Option
     if (options.headers !== true) {
         const named = options.headers.map(name);
 
-        onColumns?.(named);
+        onColumns?.(named, 'options');
 
         return named;
     }
@@ -22,7 +22,7 @@ function columnsOf(options: ResolvedOptions, onColumns?: ColumnsHandler): Option
     return (record: string[]) => {
         const named = record.map(name);
 
-        onColumns?.(named);
+        onColumns?.(named, 'file');
 
         return named;
     };

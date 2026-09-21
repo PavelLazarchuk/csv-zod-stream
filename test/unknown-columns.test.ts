@@ -112,6 +112,27 @@ describe('unknownColumns', () => {
 
         expect(error).toBeInstanceOf(UnknownColumnsError);
     });
+
+    it('stays quiet on an empty file named by an explicit header list', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        const { rows } = await parseCsv('', Person, {
+            headers: ['name', 'email', 'extra'],
+            unknownColumns: 'warn',
+        });
+
+        expect(rows).toEqual([]);
+        expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('stays quiet on an empty file in the web build too', async () => {
+        const { rows } = await webParseCsv('', Person, {
+            headers: ['name', 'email', 'extra'],
+            unknownColumns: 'error',
+        });
+
+        expect(rows).toEqual([]);
+    });
 });
 
 describe('did you mean', () => {

@@ -37,7 +37,7 @@ export interface RowSink<Out> {
     readonly errors: readonly CsvRowError[];
     readonly droppedErrors: number;
     readonly stats: CsvStats;
-    headers(columns: readonly string[]): void;
+    headers(columns: readonly string[], origin: 'file' | 'options'): void;
     handle(entry: ParsedEntry): PendingOutcome<Out>;
     skip(entry: SkippedEntry): RowOutcome<Out>;
     end(): void;
@@ -411,6 +411,8 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
     let lastRecords = 0;
     let lastBytes = 0;
     let lastColumns: readonly string[] | undefined;
+    let headerRead = false;
+    let parsedAnything = false;
 
     const snapshot = (): CsvStats => ({
         bytes,
@@ -436,6 +438,7 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
     }
 
     function track(info: { records: number; bytes?: number }): void {
+        parsedAnything = true;
         records = Math.max(records, info.records);
         if (info.bytes !== undefined) bytes = Math.max(bytes, info.bytes);
     }
@@ -488,12 +491,14 @@ export function createRowSink<S extends StandardSchemaV1, Out = StandardSchemaV1
             return snapshot();
         },
 
-        headers(columns) {
+        headers(columns, origin) {
             lastColumns = columns;
+            headerRead = origin === 'file';
         },
 
         end() {
-            const wrongHeader = checkHeader?.(lastColumns);
+            const wrongHeader =
+                headerRead || parsedAnything ? checkHeader?.(lastColumns) : undefined;
 
             if (wrongHeader) throw wrongHeader;
 

@@ -127,6 +127,21 @@ describe('checkHeaders', () => {
         expect(await collect(Person, '')).toEqual([]);
     });
 
+    it('has nothing to check on an empty file named by an explicit header list', async () => {
+        expect(await collect(Person, '', { headers: ['name', 'note'] })).toEqual([]);
+    });
+
+    it('checks an explicit header list once a record was skipped', async () => {
+        const failure = await collect(Person, '"unclosed,1\n', {
+            headers: ['name', 'note'],
+            skipRecordsWithError: true,
+            onInvalidRow: 'collect',
+        }).catch((error: Error) => error);
+
+        expect(failure).toBeInstanceOf(MissingColumnsError);
+        expect((failure as MissingColumnsError).missing).toEqual(['age']);
+    });
+
     it('suggests a column the schema has not already matched', async () => {
         const failure = await collect(Person, 'name,aeg\na,1\n').catch((error: Error) => error);
 
