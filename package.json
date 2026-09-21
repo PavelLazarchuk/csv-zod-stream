@@ -1,6 +1,6 @@
 {
     "name": "csv-zod-stream",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "description": "Streaming CSV/TSV parser with per-row schema validation — Zod, zod/mini, Valibot or any Standard Schema, over a real Node.js Transform with honest backpressure, physical line numbers on errors, progress counters and a Web Streams build.",
     "license": "MIT",
     "sideEffects": false,
