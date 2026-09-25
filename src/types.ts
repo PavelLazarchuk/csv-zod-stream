@@ -118,13 +118,20 @@ function delimiterOf(value: (string & {}) | 'auto'): (string & {}) | 'auto' {
     return value;
 }
 
+function isNames(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every(name => typeof name === 'string');
+}
+
 function checkHeaderOptions(options: CsvValidatorOptions): void {
-    const { normalizeHeaders, headers } = options;
+    const { normalizeHeaders, headers, checkHeaders } = options;
 
     if (typeof normalizeHeaders === 'string') assertHeaderCase(normalizeHeaders);
 
-    if (Array.isArray(headers) && headers.some(header => typeof header !== 'string'))
+    if (headers !== undefined && headers !== true && !isNames(headers))
         throw new RangeError('headers must be true or an array of column names');
+
+    if (checkHeaders !== undefined && typeof checkHeaders !== 'boolean' && !isNames(checkHeaders))
+        throw new RangeError('checkHeaders must be a boolean or an array of column names');
 }
 
 export function resolveOptions(options: CsvValidatorOptions = {}): ResolvedOptions {

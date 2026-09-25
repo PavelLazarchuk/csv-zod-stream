@@ -243,6 +243,21 @@ describe('option validation', () => {
         );
     });
 
+    it('rejects headers that are neither true nor an array', () => {
+        expect(() => createCsvValidator(Person, { headers: false as unknown as true })).toThrow(
+            /headers must be true or an array of column names/
+        );
+    });
+
+    it('rejects checkHeaders that is neither a boolean nor an array of names', () => {
+        expect(() =>
+            createCsvValidator(Person, { checkHeaders: 'name' as unknown as string[] })
+        ).toThrow(/checkHeaders must be a boolean or an array of column names/);
+        expect(() =>
+            createCsvValidator(Person, { checkHeaders: [1] as unknown as string[] })
+        ).toThrow(RangeError);
+    });
+
     it('rejects an unknown normalizeHeaders before a byte is read', () => {
         expect(() =>
             createCsvValidator(Person, { normalizeHeaders: 'kebab' as 'snake', delimiter: 'auto' })

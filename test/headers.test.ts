@@ -131,4 +131,13 @@ describe('columnAliases', () => {
 
         expect(rows).toEqual([{ firstName: 'Ada', age: 36 }]);
     });
+    it('does not read a header named after an Object.prototype member as an alias', async () => {
+        const { rows } = await parseCsv(
+            'constructor,toString,age\nx,y,36\n',
+            z.object({ constructor: z.string(), toString: z.string(), years: z.coerce.number() }),
+            { columnAliases: { age: 'years' } }
+        );
+
+        expect(rows).toEqual([{ constructor: 'x', toString: 'y', years: 36 }]);
+    });
 });

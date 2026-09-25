@@ -254,6 +254,18 @@ describe('keepErrors', () => {
         expect(stream.errors.map(error => error.line)).toEqual([20, 21]);
     });
 
+    it('hands out a snapshot that later rows do not change', async () => {
+        const { done, stream } = run(MANY, { onInvalidRow: 'collect', keepErrors: 5 });
+        let first: readonly CsvRowError[] | undefined;
+
+        stream.once('invalid-row', () => (first = stream.errors));
+
+        await done;
+
+        expect(first).toHaveLength(1);
+        expect(stream.errors).not.toBe(stream.errors);
+    });
+
     it('leaves droppedErrors at zero under skip, which collects nothing', async () => {
         const { done, stream } = run(MANY, { onInvalidRow: 'skip', keepErrors: 5 });
 

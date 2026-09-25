@@ -115,15 +115,6 @@ function lineEnd(text: string, from: number): number {
     return text.length;
 }
 
-/**
- * Counts the comment and blank lines the parser stepped over on the way to this
- * record. They sit at the front of `raw`, and the record's own first line can be
- * neither — the parser would have stepped over that one too.
- *
- * Reading them off `raw` rather than off the parsed values keeps the position
- * right for fields the parser dropped, such as the extra columns of a ragged
- * record under `relaxColumnCount`.
- */
 function leadingSkipped(raw: string, options: ResolvedOptions): number {
     const { comment, skipEmptyLines, trim } = options;
     let count = 0;
@@ -348,7 +339,7 @@ function createErrorLog(keep: number): ErrorLog {
 
     return {
         get kept() {
-            return cursor ? [...ring.slice(cursor), ...ring.slice(0, cursor)] : ring;
+            return [...ring.slice(cursor), ...ring.slice(0, cursor)];
         },
 
         get dropped() {

@@ -52,11 +52,12 @@ export function createHeaderMapper(options: CsvValidatorOptions): HeaderMapper |
         normalize = header => preset(header);
     }
 
+    const alias = (name: string) =>
+        columnAliases && Object.hasOwn(columnAliases, name) ? columnAliases[name] : undefined;
+
     return (header, index) => {
         const normalized = normalize ? normalize(header, index) : header;
 
-        if (!columnAliases) return normalized;
-
-        return columnAliases[header] ?? columnAliases[normalized] ?? normalized;
+        return alias(header) ?? alias(normalized) ?? normalized;
     };
 }
