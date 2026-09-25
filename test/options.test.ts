@@ -252,7 +252,7 @@ describe('option validation', () => {
     it('rejects checkHeaders that is neither a boolean nor an array of names', () => {
         expect(() =>
             createCsvValidator(Person, { checkHeaders: 'name' as unknown as string[] })
-        ).toThrow(/checkHeaders must be a boolean or an array of column names/);
+        ).toThrow(/checkHeaders must be true, false or an array of column names/);
         expect(() =>
             createCsvValidator(Person, { checkHeaders: [1] as unknown as string[] })
         ).toThrow(RangeError);

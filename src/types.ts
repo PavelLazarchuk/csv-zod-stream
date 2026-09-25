@@ -118,20 +118,24 @@ function delimiterOf(value: (string & {}) | 'auto'): (string & {}) | 'auto' {
     return value;
 }
 
-function isNames(value: unknown): value is string[] {
-    return Array.isArray(value) && value.every(name => typeof name === 'string');
+function assertNames(name: string, value: unknown, allowed: readonly unknown[]): void {
+    if (
+        value === undefined ||
+        allowed.includes(value) ||
+        (Array.isArray(value) && value.every(column => typeof column === 'string'))
+    )
+        return;
+
+    throw new RangeError(`${name} must be ${allowed.join(', ')} or an array of column names`);
 }
 
 function checkHeaderOptions(options: CsvValidatorOptions): void {
-    const { normalizeHeaders, headers, checkHeaders } = options;
+    const { normalizeHeaders } = options;
 
     if (typeof normalizeHeaders === 'string') assertHeaderCase(normalizeHeaders);
 
-    if (headers !== undefined && headers !== true && !isNames(headers))
-        throw new RangeError('headers must be true or an array of column names');
-
-    if (checkHeaders !== undefined && typeof checkHeaders !== 'boolean' && !isNames(checkHeaders))
-        throw new RangeError('checkHeaders must be a boolean or an array of column names');
+    assertNames('headers', options.headers, [true]);
+    assertNames('checkHeaders', options.checkHeaders, [true, false]);
 }
 
 export function resolveOptions(options: CsvValidatorOptions = {}): ResolvedOptions {
