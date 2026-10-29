@@ -210,6 +210,11 @@ line,record,error,code,field,message,raw
 not read. `delimiter`, `eol` and `header` are all overridable, and `bom: true` prepends a BOM so
 Excel opens the file as UTF-8.
 
+`raw` is whatever the uploaded file held, so a cell starting with `=`, `+`, `-`, `@`, a tab or a
+carriage return gets a leading `'`: a spreadsheet shows it as text instead of running it as a
+formula ([CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)). Pass
+`escapeFormulas: false` when the file is only read by code.
+
 ## Async validation
 
 A schema with an async refinement or transform needs `safeParseAsync`, which `async: true` turns on:

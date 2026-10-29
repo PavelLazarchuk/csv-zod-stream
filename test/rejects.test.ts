@@ -62,6 +62,15 @@ describe('rejectsCsv', () => {
         expect(csv.startsWith('﻿line;record;error;code;field;message;raw\r\n')).toBe(true);
     });
 
+    it('defuses cells a spreadsheet would run as a formula', async () => {
+        const errors = await rejects('name,age\n=1+1,nope\n@SUM(1),nope\n');
+        const [, first, second] = rejectsCsv(errors).split('\n');
+
+        expect(first?.endsWith(`,"'=1+1,nope"`)).toBe(true);
+        expect(second?.endsWith(`,"'@SUM(1),nope"`)).toBe(true);
+        expect(rejectsCsv(errors, { escapeFormulas: false })).toContain(',"@SUM(1),nope"');
+    });
+
     it('is exported from the web build as well', () => {
         expect(webRejectsCsv([], { header: false })).toBe('');
     });

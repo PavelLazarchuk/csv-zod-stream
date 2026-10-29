@@ -6,16 +6,19 @@ export interface RejectsCsvOptions {
     eol?: string;
     header?: boolean;
     bom?: boolean;
+    escapeFormulas?: boolean;
 }
 
 const COLUMNS = ['line', 'record', 'error', 'code', 'field', 'message', 'raw'];
 
 const SPECIAL = /["\r\n]/;
 
-function escape(value: string, delimiter: string): string {
-    return SPECIAL.test(value) || value.includes(delimiter)
-        ? `"${value.replace(/"/g, '""')}"`
-        : value;
+const FORMULA = /^[=+\-@\t\r]/;
+
+function escape(value: string, delimiter: string, formulas: boolean): string {
+    const text = formulas && FORMULA.test(value) ? `'${value}` : value;
+
+    return SPECIAL.test(text) || text.includes(delimiter) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function fieldsOf(error: CsvRowError): string {
@@ -44,7 +47,13 @@ export function rejectsCsv(
     errors: readonly CsvRowError[],
     options: RejectsCsvOptions = {}
 ): string {
-    const { delimiter = ',', eol = '\n', header = true, bom = false } = options;
+    const {
+        delimiter = ',',
+        eol = '\n',
+        header = true,
+        bom = false,
+        escapeFormulas = true,
+    } = options;
     const lines: string[] = [];
 
     if (header) lines.push(COLUMNS.join(delimiter));
@@ -52,7 +61,7 @@ export function rejectsCsv(
     for (const error of errors)
         lines.push(
             cellsOf(error)
-                .map(cell => escape(cell, delimiter))
+                .map(cell => escape(cell, delimiter, escapeFormulas))
                 .join(delimiter)
         );
 
